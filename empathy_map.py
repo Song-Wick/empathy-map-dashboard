@@ -65,6 +65,16 @@ if uploaded_file is not None:
                     html_content = response.text.strip().removeprefix('```html').removesuffix('```')
                     
                     st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
+                    
+                    # 파일 다운로드 버튼 추가
+                    st.download_button(
+                        label="📥 공감맵 대시보드(HTML) 다운로드",
+                        data=html_content,
+                        file_name="empathy_map_dashboard.html",
+                        mime="text/html"
+                    )
+                    
+                    # 대시보드 화면 표시
                     components.html(html_content, height=850, scrolling=True)
                     
                 except Exception as e:
