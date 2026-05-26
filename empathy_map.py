@@ -11,8 +11,7 @@ st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
 # 사이드바: API 키 입력
 with st.sidebar:
     st.header("설정")
-    api_key_input = st.text_input("Gemini API Key를 입력하세요", type="password")
-    st.markdown("※ API 키가 있어야 분석이 가능합니다.")
+    st.success("🔒 Gemini API 키가 시스템에 안전하게 연동되었습니다.")
 
 # 메인 화면: 파일 업로드
 uploaded_file = st.file_uploader("설문조사 결과 파일 업로드 (CSV 또는 Excel)", type=['csv', 'xlsx'])
@@ -32,12 +31,10 @@ if uploaded_file is not None:
         
         # 실행 버튼
         if st.button("공감맵 및 대시보드 생성하기"):
-            if not api_key_input:
-                st.warning("API Key를 먼저 입력해주세요.")
-            else:
-                with st.spinner('AI가 데이터를 분석하여 이슈 구조화 및 공감맵을 생성 중입니다...'):
-                    # API 키 정제: 영문자, 숫자, 하이픈, 언더바 외의 모든 숨겨진 문자(공백/엔터 포함) 강제 제거
-                    clean_api_key = re.sub(r'[^a-zA-Z0-9_-]', '', api_key_input)
+            with st.spinner("AI가 데이터를 분석하여 이슈 구조화 및 공감맵을 생성 중입니다..."):
+                try:
+                    # 시스템 Secrets에 저장한 API 키를 자동으로 가져옵니다.
+                    clean_api_key = st.secrets["GEMINI_API_KEY"]
                     
                     # 데이터 전처리
                     responses = df[target_column].dropna().astype(str).tolist()
