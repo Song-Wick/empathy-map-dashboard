@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 from google import genai
 import streamlit.components.v1 as components
-import re
 
 # 페이지 설정
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
 st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
 
-# 사이드바: API 키 입력
+# 사이드바: API 키 자동 연동 안내
 with st.sidebar:
     st.header("설정")
     st.success("🔒 Gemini API 키가 시스템에 안전하게 연동되었습니다.")
@@ -31,7 +30,7 @@ if uploaded_file is not None:
         
         # 실행 버튼
         if st.button("공감맵 및 대시보드 생성하기"):
-            with st.spinner("AI가 데이터를 분석하여 이슈 구조화 및 공감맵을 생성 중입니다..."):
+            with st.spinner('AI가 데이터를 분석하여 이슈 구조화 및 공감맵을 생성 중입니다...'):
                 try:
                     # 시스템 Secrets에 저장한 API 키를 자동으로 가져옵니다.
                     clean_api_key = st.secrets["GEMINI_API_KEY"]
@@ -67,6 +66,9 @@ if uploaded_file is not None:
                     
                     st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
                     components.html(html_content, height=850, scrolling=True)
+                    
+                except Exception as e:
+                    st.error(f"AI 분석 중 오류가 발생했습니다: {e}")
                     
     except Exception as e:
         st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
