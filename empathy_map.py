@@ -7,6 +7,10 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
 st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
 
+# 세션 상태(Session State) 초기화: 페이지가 리런되어도 데이터를 유지하는 저장소
+if "html_content" not in st.session_state:
+    st.session_state.html_content = None
+
 # 사이드바: API 키 자동 연동 안내
 with st.sidebar:
     st.header("설정")
@@ -61,24 +65,27 @@ if uploaded_file is not None:
                         contents=prompt,
                     )
                     
-                    # 결과물 정제 및 출력
-                    html_content = response.text.strip().removeprefix('```html').removesuffix('```')
-                    
-                    st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
-                    
-                    # 파일 다운로드 버튼 추가
-                    st.download_button(
-                        label="📥 공감맵 대시보드(HTML) 다운로드",
-                        data=html_content,
-                        file_name="empathy_map_dashboard.html",
-                        mime="text/html"
-                    )
-                    
-                    # 대시보드 화면 표시
-                    components.html(html_content, height=850, scrolling=True)
+                    # 결과물 정제 및 세션 상태에 저장
+                    st.session_state.html_content = response.text.strip().removeprefix('```html').removesuffix('```')
                     
                 except Exception as e:
                     st.error(f"AI 분석 중 오류가 발생했습니다: {e}")
+                    st.session_state.html_content = None
+
+        # 생성된 결과가 세션 상태에 존재한다면 화면에 항상 유지
+        if st.session_state.html_content is not None:
+            st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
+            
+            # 파일 다운로드 버튼 (이제 이 버튼을 눌러도 세션 상태 덕분에 결과가 보존됩니다)
+            st.download_button(
+                label="📥 공감맵 대시보드(HTML) 다운로드",
+                data=st.session_state.html_content,
+                file_name="empathy_map_dashboard.html",
+                mime="text/html"
+            )
+            
+            # 대시보드 화면 표시
+            components.html(st.session_state.html_content, height=850, scrolling=True)
                     
     except Exception as e:
         st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
