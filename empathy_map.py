@@ -5,7 +5,7 @@ import streamlit.components.v1 as components
 
 # 페이지 설정
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
-st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
+st.title("📊 설문조사 공감맵 자동 생성기")
 
 # 세션 상태(Session State) 초기화: 페이지가 리런되어도 데이터를 유지하는 저장소
 if "html_content" not in st.session_state:
