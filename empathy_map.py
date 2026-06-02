@@ -5,13 +5,16 @@ import streamlit.components.v1 as components
 import re
 
 # ========== [고정 API 키 입력란] ==========
-# 아래 따옴표 사이에 발급받으신 API 키를 한 번만 붙여넣어 두세요.
 MY_API_KEY = "AIzaSyD-75YTq_FGcTNch9OWzKQ6PkjabWvhiHE"
 # ==========================================
 
 # 페이지 설정
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
-st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
+st.title("📊 설문조사 공감맵 자동 생성기")
+
+# [수정] 생성된 HTML 내용을 유지하기 위한 세션 상태 초기화
+if 'html_content' not in st.session_state:
+    st.session_state.html_content = None
 
 # 메인 화면: 파일 업로드
 uploaded_file = st.file_uploader("설문조사 결과 파일 업로드 (CSV 또는 Excel)", type=['csv', 'xlsx'])
@@ -87,11 +90,23 @@ if uploaded_file is not None:
                         contents=prompt,
                     )
                     
-                    # 결과물 정제 및 출력
-                    html_content = response.text.strip().removeprefix('```html').removesuffix('```')
+                    # [수정] 결과물을 세션 상태에 저장합니다.
+                    st.session_state.html_content = response.text.strip().removeprefix('```html').removesuffix('```')
                     
-                    st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
-                    components.html(html_content, height=1000, scrolling=True)
+        # [수정] 생성된 대시보드가 세션 상태에 존재하면 화면에 항상 출력하고 다운로드 버튼을 제공합니다.
+        if st.session_state.html_content is not None:
+            st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
+            
+            # 다운로드 버튼 추가 (HTML 파일로 다운로드)
+            st.download_button(
+                label="📥 공감맵 대시보드 다운로드 (HTML)",
+                data=st.session_state.html_content,
+                file_name="empathy_map_dashboard.html",
+                mime="text/html"
+            )
+            
+            # 화면 표시 유지
+            components.html(st.session_state.html_content, height=1000, scrolling=True)
                     
     except Exception as e:
         st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
