@@ -4,15 +4,14 @@ from google import genai
 import streamlit.components.v1 as components
 import re
 
+# ========== [고정 API 키 입력란] ==========
+# 아래 따옴표 사이에 발급받으신 API 키를 한 번만 붙여넣어 두세요.
+MY_API_KEY = "AIzaSyD-75YTq_FGcTNch9OWzKQ6PkjabWvhiHE"
+# ==========================================
+
 # 페이지 설정
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
-st.title("📊 설문조사 공감맵 자동 생성기")
-
-# 사이드바: API 키 입력
-with st.sidebar:
-    st.header("설정")
-    api_key_input = st.text_input("Gemini API Key를 입력하세요", type="password")
-    st.markdown("※ API 키가 있어야 분석이 가능합니다.")
+st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
 
 # 메인 화면: 파일 업로드
 uploaded_file = st.file_uploader("설문조사 결과 파일 업로드 (CSV 또는 Excel)", type=['csv', 'xlsx'])
@@ -32,12 +31,12 @@ if uploaded_file is not None:
         
         # 실행 버튼
         if st.button("공감맵 및 대시보드 생성하기"):
-            if not api_key_input:
-                st.warning("API Key를 먼저 입력해주세요.")
+            if MY_API_KEY == "여기에_발급받은_API_키를_붙여넣으세요" or not MY_API_KEY.strip():
+                st.error("코드 8번째 줄(MY_API_KEY)에 API 키가 입력되지 않았습니다. 코드를 수정하고 저장해주세요.")
             else:
                 with st.spinner('AI가 데이터를 분석하여 디자인 레이아웃에 맞게 대시보드를 생성 중입니다...'):
                     # API 키 정제
-                    clean_api_key = re.sub(r'[^a-zA-Z0-9_-]', '', api_key_input)
+                    clean_api_key = re.sub(r'[^a-zA-Z0-9_-]', '', MY_API_KEY)
                     
                     # 데이터 전처리
                     responses = df[target_column].dropna().astype(str).tolist()
@@ -46,7 +45,7 @@ if uploaded_file is not None:
                     # 최신 구글 API 클라이언트 연결
                     client = genai.Client(api_key=clean_api_key)
                     
-                    # 새로운 HTML/CSS 가이드라인이 명시된 고도화 프롬프트
+                    # HTML/CSS 가이드라인이 명시된 프롬프트
                     prompt = f"""
                     다음은 프로그램 참가자들의 주관식 설문조사 응답입니다.
                     이 데이터를 철저히 분석하여 아래 세 가지 섹션을 모두 포함한 대시보드를 도출해 주세요.
@@ -83,7 +82,6 @@ if uploaded_file is not None:
                     - {survey_text}
                     """
                     
-                    # 이전 테스트에서 정상 작동이 검증된 최신 모델 설정
                     response = client.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=prompt,
