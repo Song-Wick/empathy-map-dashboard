@@ -6,7 +6,7 @@ import re
 
 # 페이지 설정
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
-st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
+st.title("📊 설문조사 공감맵 자동 생성기")
 
 # 사이드바: API 키 입력
 with st.sidebar:
