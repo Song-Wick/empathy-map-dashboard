@@ -4,7 +4,6 @@ from google import genai
 import streamlit.components.v1 as components
 
 # ========== [고정 API 키 입력란] ==========
-# GitHub 환경(Streamlit Cloud)에서 안전하게 키를 불러옵니다.
 MY_API_KEY = st.secrets["GEMINI_API_KEY"]
 # ==========================================
 
@@ -12,7 +11,7 @@ MY_API_KEY = st.secrets["GEMINI_API_KEY"]
 st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
 st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
 
-# [수정] 생성된 HTML 내용을 유지하기 위한 세션 상태 초기화
+# 생성된 HTML 내용을 유지하기 위한 세션 상태 초기화
 if 'html_content' not in st.session_state:
     st.session_state.html_content = None
 
@@ -35,7 +34,6 @@ if uploaded_file is not None:
         # 실행 버튼
         if st.button("공감맵 및 대시보드 생성하기"):
             with st.spinner('AI가 데이터를 분석하여 디자인 레이아웃에 맞게 대시보드를 생성 중입니다...'):
-                # API 키 정제 (AQ. 키의 마침표가 사라지지 않도록 보호)
                 clean_api_key = MY_API_KEY.strip()
                 
                 # 데이터 전처리
@@ -45,7 +43,6 @@ if uploaded_file is not None:
                 # 최신 구글 API 클라이언트 연결
                 client = genai.Client(api_key=clean_api_key)
                 
-                # [수정됨] 네트워킹 분석이 추가된 고도화 프롬프트
                 prompt = f"""
                 다음은 프로그램 참가자들의 주관식 설문조사 응답입니다.
                 이 데이터를 철저히 분석하여 아래 네 가지 섹션을 순서대로 모두 포함한 대시보드를 도출해 주세요.
@@ -93,15 +90,14 @@ if uploaded_file is not None:
                     config={'temperature': 0.0}
                 )
 
-                    
-                    # [수정] 결과물을 세션 상태에 저장합니다.
-                    st.session_state.html_content = response.text.strip().removeprefix('```html').removesuffix('```')
-                    
-        # [수정] 생성된 대시보드가 세션 상태에 존재하면 화면에 항상 출력하고 다운로드 버튼을 제공합니다.
+                # 결과물을 세션 상태에 저장합니다. (들여쓰기 수정 완료)
+                st.session_state.html_content = response.text.strip().removeprefix('```html').removesuffix('```')
+                
+        # 생성된 대시보드가 세션 상태에 존재하면 화면에 출력 (중복된 렌더링 코드 병합 완료)
         if st.session_state.html_content is not None:
             st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
             
-            # 다운로드 버튼 추가 (HTML 파일로 다운로드)
+            # 다운로드 버튼 추가
             st.download_button(
                 label="📥 공감맵 대시보드 다운로드 (HTML)",
                 data=st.session_state.html_content,
@@ -109,14 +105,8 @@ if uploaded_file is not None:
                 mime="text/html"
             )
             
-            # 화면 표시 유지
-            components.html(st.session_state.html_content, height=1000, scrolling=True)                
-                 
-            # 결과물 정제 및 출력
-            html_content = response.text.strip().removeprefix('```html').removesuffix('```')             
-            st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
-            # 내용이 늘어났으므로 height를 1000 -> 1200으로 확장
-            components.html(html_content, height=1200, scrolling=True)
-                
+            # 화면 표시 유지 (높이 1200으로 적용)
+            components.html(st.session_state.html_content, height=1200, scrolling=True)                
+            
     except Exception as e:
         st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
