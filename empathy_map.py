@@ -111,13 +111,12 @@ if uploaded_file is not None:
             
             # 화면 표시 유지
             components.html(st.session_state.html_content, height=1000, scrolling=True)                
-                    
-                # 결과물 정제 및 출력
-                html_content = response.text.strip().removeprefix('```html').removesuffix('```')
-                
-                st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
-                # 내용이 늘어났으므로 height를 1000 -> 1200으로 확장
-                components.html(html_content, height=1200, scrolling=True)
+                 
+            # 결과물 정제 및 출력
+            html_content = response.text.strip().removeprefix('```html').removesuffix('```')             
+            st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
+            # 내용이 늘어났으므로 height를 1000 -> 1200으로 확장
+            components.html(html_content, height=1200, scrolling=True)
                 
     except Exception as e:
         st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
