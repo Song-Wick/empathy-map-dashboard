@@ -5,7 +5,7 @@ import streamlit.components.v1 as components
 import re
 
 # ========== [고정 API 키 입력란] ==========
-MY_API_KEY = "AIzaSyD-75YTq_FGcTNch9OWzKQ6PkjabWvhiHE"
+MY_API_KEY = st.secrets["GEMINI_API_KEY"]
 # ==========================================
 
 # 페이지 설정
