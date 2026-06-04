@@ -39,7 +39,7 @@ if uploaded_file is not None:
             else:
                 with st.spinner('AI가 데이터를 분석하여 디자인 레이아웃에 맞게 대시보드를 생성 중입니다...'):
                     # API 키 정제
-                    clean_api_key = re.sub(r'[^a-zA-Z0-9_-]', '', MY_API_KEY)
+                    clean_api_key = MY_API_KEY.strip()
                     
                     # 데이터 전처리
                     responses = df[target_column].dropna().astype(str).tolist()
