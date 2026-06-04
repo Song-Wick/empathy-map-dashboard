@@ -8,8 +8,8 @@ MY_API_KEY = st.secrets["GEMINI_API_KEY"]
 # ==========================================
 
 # 페이지 설정
-st.set_page_config(page_title="공감맵 자동 생성기", layout="wide")
-st.title("📊 학술 프로그램 설문조사 공감맵 자동 생성기")
+st.set_page_config(page_title="설문조사 공감맵 생성기", layout="wide")
+st.title("📊 설문조사 공감맵 생성기")
 
 # 생성된 HTML 내용을 유지하기 위한 세션 상태 초기화
 if 'html_content' not in st.session_state:
