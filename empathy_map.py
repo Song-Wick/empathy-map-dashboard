@@ -310,6 +310,20 @@ if uploaded_file is not None:
                         .feel-neu  {{ background: #f5f3ff; color: #5b21b6; }}
 
                         /* ── SECTION 3: NETWORKING ── */
+                        .methodology-note {{
+                            background: #f8f9fb;
+                            border: 1px solid #e3e8ef;
+                            border-left: 3px solid #3b82f6;
+                            padding: 12px 16px;
+                            font-size: 12px;
+                            color: #5a6575;
+                            border-radius: 4px 8px 8px 4px;
+                            margin-bottom: 20px;
+                            line-height: 1.6;
+                        }}
+                        .methodology-note strong {{
+                            color: #1e2a3a;
+                        }}
                         .network-wrapper {{
                             margin-bottom: 40px;
                         }}
