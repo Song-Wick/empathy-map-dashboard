@@ -521,6 +521,9 @@ if uploaded_file is not None:
                                 <span class="section-title-en">Networking Analysis</span>
                             </div>
                         </div>
+                        <div class="methogology-note">
+                            <strong>💡 분석 안내:</strong> 시각적인 점과 선 형태의 단순 그래프 대신, AI가 설문 응답의 전체 문맥을 파악하여 핵심 키워드 간의 인과관계와 상호작용을 스토리텔링 방식으로 풀어낸 <strong>의미 연결망(Semantic Network)</strong>입니다.
+                        </div>    
                         <div class="network-wrapper">
                             <div class="keyword-row">
                                 <span class="kw-badge"><span class="dot"></span>분석된 키워드1</span>
