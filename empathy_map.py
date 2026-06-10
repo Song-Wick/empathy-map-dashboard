@@ -9,7 +9,7 @@ MY_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 # 페이지 설정
 st.set_page_config(page_title="설문조사 공감맵 생성기", layout="wide")
-st.title("📊 설문조사 공감맵 생성기")
+st.title("📊 설문조사 공감맵 & HMW 대시보드 생성기")
 
 # 생성된 HTML 내용을 유지하기 위한 세션 상태 초기화
 if 'html_content' not in st.session_state:
@@ -32,8 +32,8 @@ if uploaded_file is not None:
         target_column = st.selectbox("분석할 주관식 답변이 포함된 열(Column)을 선택하세요.", df.columns)
         
         # 실행 버튼
-        if st.button("공감맵 및 대시보드 생성하기"):
-            with st.spinner('AI가 데이터를 분석하여 디자인 레이아웃에 맞게 대시보드를 생성 중입니다...'):
+        if st.button("대시보드 생성하기 (Pain Point & HMW 포함)"):
+            with st.spinner('AI가 데이터를 분석하여 6단계 대시보드를 생성 중입니다. 다소 시간이 걸릴 수 있습니다...'):
                 clean_api_key = MY_API_KEY.strip()
                 
                 # 데이터 전처리
@@ -46,17 +46,19 @@ if uploaded_file is not None:
                 # HTML/CSS 가이드라인이 명시된 고도화 프롬프트
                 prompt = f"""
                 다음은 프로그램 참가자들의 주관식 설문조사 응답입니다.
-                이 데이터를 철저히 분석하여 아래 4가지 섹션을 도출하고, 제공된 HTML 템플릿의 내용(Text)을 분석 결과로 교체하여 완성해 주세요.
+                이 데이터를 철저히 분석하여 아래 6가지 섹션을 도출하고, 제공된 HTML 템플릿의 내용(Text)을 분석 결과로 교체하여 완성해 주세요.
                 
                 1. 이슈 구조화 (Issue Structuring): 사용자, 요구사항, 목표, 문제점, 행동 추출
                 2. 공감 맵 (Empathy Map): Says, Thinks, Does, Feels 4가지 영역 분석
-                3. 네트워킹 분석 (Networking Analysis): 핵심 키워드 간의 관계 분석
-                4. 문제 정의 (Problem Definition): 핵심 문제 진술
+                3. 네트워킹 분석 (Networking Analysis): 핵심 키워드 간의 관계를 서술형으로 분석
+                4. Pain Point 식별 (Pain Point Identification): 상호작용 레벨(지원방식 등 물리적 마찰), 사용자 여정 레벨(기획/제작 과정의 어려움), 장기적 관계 레벨(동기부여, 성취감 저하)로 3분류
+                5. 문제 재정의 (Problem Redefinition): 핵심 사용자(User)가 어떤 니즈(Needs to)를 가지고 있는지, 그리고 그 근본적인 이유/인사이트(Because)가 무엇인지 문장 형태로 도출
+                6. HMW (How Might We) 도출: 재정의된 문제를 바탕으로, 긍정적이고 창의적인 해결책을 촉발할 수 있는 '우리가 어떻게 하면 ~할 수 있을까?' 질문 3가지 작성
                 
                 [출력 규칙]
                 - 아래 제공된 [HTML 템플릿]의 구조(태그, 클래스명 등)와 CSS 스타일을 단 하나도 수정하거나 삭제하지 말고 100% 그대로 유지하세요.
-                - 템플릿 내부의 예시 텍스트만 실제 분석 결과로 교체하세요.
-                - 마크다운 기호(```html)는 완전히 제외하고 순수 HTML 텍스트만 리턴해야 합니다.
+                - 템플릿 내부의 안내 텍스트(예: "여기에 분석 결과를 작성하세요")만 실제 분석 결과로 교체하세요.
+                - 마크다운 기호(```html 등)는 완전히 제외하고 순수 HTML 텍스트만 리턴해야 합니다.
                 
                 [설문 응답 데이터]
                 {survey_text}
@@ -129,7 +131,8 @@ if uploaded_file is not None:
                         .header-divider {{
                             margin: 20px 0 0;
                             display: flex;
-                            gap: 24px;
+                            flex-wrap: wrap;
+                            gap: 16px;
                         }}
                         .header-pill {{
                             display: inline-block;
@@ -369,35 +372,129 @@ if uploaded_file is not None:
                             color: #1e2a3a;
                         }}
 
-                        /* ── SECTION 4: PROBLEM DEF ── */
-                        .problem-wrapper {{}}
-                        .problem-card {{
-                            background: #fef9f9;
-                            border: 0.5px solid #fbd5d5;
+                        /* ── SECTION 4: PAIN POINT IDENTIFICATION ── */
+                        .pp-grid {{
+                            display: grid;
+                            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                            gap: 16px;
+                            margin-bottom: 40px;
+                        }}
+                        .pp-card {{
+                            background: #fff;
+                            border: 0.5px solid #e3e8ef;
                             border-radius: 10px;
-                            overflow: hidden;
+                            padding: 20px;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
                         }}
-                        .problem-card-header {{
-                            background: #fef2f2;
-                            padding: 12px 20px;
-                            font-size: 11px;
+                        .pp-card.level-1 {{ border-top: 4px solid #f59e0b; }}
+                        .pp-card.level-2 {{ border-top: 4px solid #ef4444; }}
+                        .pp-card.level-3 {{ border-top: 4px solid #8b5cf6; }}
+                        
+                        .pp-header {{
                             font-weight: 700;
-                            letter-spacing: 0.08em;
-                            text-transform: uppercase;
-                            color: #b91c1c;
-                            border-bottom: 0.5px solid #fbd5d5;
+                            font-size: 14px;
+                            margin-bottom: 12px;
+                            color: #1e2a3a;
                         }}
-                        .problem-item {{
-                            padding: 16px 20px;
+                        .pp-card ul {{
+                            list-style: none;
+                            padding: 0;
+                        }}
+                        .pp-card ul li {{
+                            position: relative;
+                            padding-left: 14px;
+                            margin-bottom: 8px;
                             font-size: 13px;
                             color: #3a4553;
-                            line-height: 1.8;
-                            border-bottom: 0.5px solid #fbd5d5;
+                            line-height: 1.6;
                         }}
-                        .problem-item:last-child {{ border-bottom: none; }}
-                        .problem-item .em-red {{
+                        .pp-card ul li::before {{
+                            content: "•";
+                            color: #b0bac8;
+                            font-weight: bold;
+                            position: absolute;
+                            left: 0;
+                        }}
+
+                        /* ── SECTION 5: PROBLEM DEFINITION (RESTRUCTURED) ── */
+                        .prob-def-box {{
+                            background: #f8f9fb;
+                            border: 0.5px solid #e3e8ef;
+                            border-radius: 10px;
+                            padding: 24px;
+                            margin-bottom: 40px;
+                        }}
+                        .prob-stmt {{
+                            display: flex;
+                            flex-wrap: wrap;
+                            gap: 12px;
+                        }}
+                        .stmt-block {{
+                            background: #fff;
+                            padding: 18px 20px;
+                            border-radius: 8px;
+                            flex: 1;
+                            min-width: 220px;
+                            border: 0.5px solid #e3e8ef;
+                            border-left: 3px solid #3b82f6;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+                        }}
+                        .stmt-block.needs {{ border-left-color: #10b981; }}
+                        .stmt-block.insight {{ border-left-color: #ef4444; }}
+                        
+                        .stmt-label {{
+                            font-size: 11px;
                             font-weight: 700;
-                            color: #b91c1c;
+                            color: #8a95a3;
+                            text-transform: uppercase;
+                            margin-bottom: 8px;
+                        }}
+                        .stmt-text {{
+                            font-size: 13.5px;
+                            color: #1e2a3a;
+                            line-height: 1.7;
+                        }}
+                        .stmt-text strong {{
+                            color: #1e2a3a;
+                            background: rgba(59, 130, 246, 0.1);
+                            padding: 0 4px;
+                            border-radius: 2px;
+                        }}
+
+                        /* ── SECTION 6: HMW ── */
+                        .hmw-list {{
+                            display: flex;
+                            flex-direction: column;
+                            gap: 12px;
+                            margin-bottom: 20px;
+                        }}
+                        .hmw-item {{
+                            background: #fff;
+                            border: 0.5px solid #e3e8ef;
+                            border-left: 4px solid #10b981;
+                            padding: 20px 24px;
+                            border-radius: 8px;
+                            display: flex;
+                            align-items: center;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+                        }}
+                        .hmw-icon {{
+                            font-size: 24px;
+                            margin-right: 18px;
+                            flex-shrink: 0;
+                        }}
+                        .hmw-content h4 {{
+                            font-size: 12px;
+                            color: #8a95a3;
+                            margin-bottom: 4px;
+                            font-weight: 500;
+                        }}
+                        .hmw-content p {{
+                            font-size: 14.5px;
+                            font-weight: 700;
+                            color: #065f46;
+                            margin: 0;
+                            line-height: 1.6;
                         }}
 
                         /* ── FOOTER ── */
@@ -436,12 +533,13 @@ if uploaded_file is not None:
                     <div class="header">
                         <div class="header-meta">분석 보고서 &nbsp;·&nbsp; Survey Analysis Report</div>
                         <h1>프로그램 참가자 설문조사 분석 대시보드</h1>
-                        <div class="header-sub">데이터 기반 설문 피드백 종합 분석</div>
+                        <div class="header-sub">데이터 기반 설문 피드백 종합 분석 및 문제 해결 도출</div>
                         <div class="header-divider">
                             <span class="header-pill">이슈 구조화</span>
                             <span class="header-pill">공감 맵</span>
                             <span class="header-pill">네트워킹 분석</span>
-                            <span class="header-pill">문제 정의</span>
+                            <span class="header-pill">Pain Point 식별</span>
+                            <span class="header-pill">문제 정의 및 HMW</span>
                         </div>
                     </div>
                     <div class="content">
@@ -474,7 +572,9 @@ if uploaded_file is not None:
                                 <p>여기에 행동에 대한 분석 결과를 작성하세요.</p>
                             </div>
                         </div>
+                        
                         <div class="section-divider"></div>
+                        
                         <div class="section-label">
                             <div class="section-number">2</div>
                             <div>
@@ -527,7 +627,9 @@ if uploaded_file is not None:
                                 </div>
                             </div>
                         </div>
+                        
                         <div class="section-divider"></div>
+                        
                         <div class="section-label">
                             <div class="section-number">3</div>
                             <div>
@@ -535,7 +637,7 @@ if uploaded_file is not None:
                                 <span class="section-title-en">Networking Analysis</span>
                             </div>
                         </div>
-                        <div class="methogology-note">
+                        <div class="methodology-note">
                             💡시각적인 점과 선 형태의 단순 그래프 대신, AI가 설문 응답의 전체 문맥을 파악하여 핵심 키워드 간의 인과관계와 상호작용을 스토리텔링 방식으로 풀어낸 <strong>의미 연결망(Semantic Network)</strong>입니다.
                         </div>    
                         <div class="network-wrapper">
@@ -550,22 +652,92 @@ if uploaded_file is not None:
                                 </div>
                             </div>
                         </div>
+
                         <div class="section-divider"></div>
+
                         <div class="section-label">
                             <div class="section-number">4</div>
                             <div>
-                                <span class="section-title">문제 정의</span>
-                                <span class="section-title-en">Problem Definition</span>
+                                <span class="section-title">Pain Point 식별 및 구조화</span>
+                                <span class="section-title-en">Pain Point Identification</span>
                             </div>
                         </div>
-                        <div class="problem-wrapper">
-                            <div class="problem-card">
-                                <div class="problem-card-header">핵심 문제 진술 · Problem Statement</div>
-                                <div class="problem-item">
-                                    여기에 분석된 핵심 문제를 서술하세요. 중요한 부분은 &lt;span class="em-red"&gt;적색으로 강조&lt;/span&gt;할 수 있습니다. (여러 개의 태그 생성 가능)
+                        <div class="pp-grid">
+                            <div class="pp-card level-1">
+                                <div class="pp-header">상호작용 레벨의 마찰</div>
+                                <ul>
+                                    <li>여기에 물리적, 시스템적, 즉각적인 마찰이나 불편 사항을 작성하세요.</li>
+                                </ul>
+                            </div>
+                            <div class="pp-card level-2">
+                                <div class="pp-header">사용자 여정 레벨의 지연</div>
+                                <ul>
+                                    <li>여기에 목적을 달성하는 과정에서 겪는 혼란이나 막막함 등을 작성하세요.</li>
+                                </ul>
+                            </div>
+                            <div class="pp-card level-3">
+                                <div class="pp-header">장기적 관계 레벨의 단절</div>
+                                <ul>
+                                    <li>여기에 신뢰 저하, 동기 부여 상실, 지속적인 참여를 가로막는 요소를 작성하세요.</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="section-label">
+                            <div class="section-number">5</div>
+                            <div>
+                                <span class="section-title">문제 재정의</span>
+                                <span class="section-title-en">Problem Redefinition</span>
+                            </div>
+                        </div>
+                        <div class="prob-def-box">
+                            <div class="prob-stmt">
+                                <div class="stmt-block user">
+                                    <div class="stmt-label">사용자 (User)</div>
+                                    <div class="stmt-text">여기에 대상 사용자를 정의하세요. (예: 영상제에 참여하여 기획력을 표현하고자 하는 학생들은)</div>
+                                </div>
+                                <div class="stmt-block needs">
+                                    <div class="stmt-label">니즈 (Needs to)</div>
+                                    <div class="stmt-text">여기에 사용자가 진정으로 필요로 하는 것을 정의하세요. 중요한 부분은 &lt;strong&gt;강조&lt;/strong&gt;하세요.</div>
+                                </div>
+                                <div class="stmt-block insight">
+                                    <div class="stmt-label">인사이트 (Because)</div>
+                                    <div class="stmt-text">여기에 니즈가 발생하는 근본적인 원인과 맥락을 정의하세요. 중요한 부분은 &lt;strong&gt;강조&lt;/strong&gt;하세요.</div>
                                 </div>
                             </div>
                         </div>
+
+                        <div class="section-label">
+                            <div class="section-number">6</div>
+                            <div>
+                                <span class="section-title">How Might We (HMW) 도출</span>
+                                <span class="section-title-en">Ideation Trigger</span>
+                            </div>
+                        </div>
+                        <div class="hmw-list">
+                            <div class="hmw-item">
+                                <div class="hmw-icon">💡</div>
+                                <div class="hmw-content">
+                                    <h4>여기에 해결할 문제의 방향성(예: 기획의 막막함 해결)을 작성하세요</h4>
+                                    <p>우리가 어떻게 하면 ~ 할 수 있을까? (창의적인 아이디어를 유도하는 질문 작성)</p>
+                                </div>
+                            </div>
+                            <div class="hmw-item">
+                                <div class="hmw-icon">🚀</div>
+                                <div class="hmw-content">
+                                    <h4>여기에 두 번째 문제의 방향성을 작성하세요</h4>
+                                    <p>우리가 어떻게 하면 ~ 할 수 있을까?</p>
+                                </div>
+                            </div>
+                            <div class="hmw-item">
+                                <div class="hmw-icon">🏆</div>
+                                <div class="hmw-content">
+                                    <h4>여기에 세 번째 문제의 방향성을 작성하세요</h4>
+                                    <p>우리가 어떻게 하면 ~ 할 수 있을까?</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="footer">
                             <div class="footer-left">프로그램 참가자 설문조사 분석 대시보드</div>
                             <div class="footer-right">설문 분석 · Survey Analysis Report</div>
@@ -582,23 +754,23 @@ if uploaded_file is not None:
                     config={'temperature': 0.0}
                 )
 
-                # 결과물을 세션 상태에 저장합니다. (들여쓰기 수정 완료)
+                # 결과물을 세션 상태에 저장합니다. (마크다운 백틱 제거)
                 st.session_state.html_content = response.text.strip().removeprefix('```html').removesuffix('```')
                 
-        # 생성된 대시보드가 세션 상태에 존재하면 화면에 출력 (중복된 렌더링 코드 병합 완료)
+        # 생성된 대시보드가 세션 상태에 존재하면 화면에 출력
         if st.session_state.html_content is not None:
-            st.subheader("2. 감정 신호 분석 기반 공감 맵 대시보드")
+            st.subheader("2. 감정 신호 분석 기반 공감 맵 & 문제 정의 대시보드")
             
             # 다운로드 버튼 추가
             st.download_button(
-                label="📥 공감맵 대시보드 다운로드 (HTML)",
+                label="📥 대시보드 다운로드 (HTML)",
                 data=st.session_state.html_content,
-                file_name="empathy_map_dashboard.html",
+                file_name="survey_dashboard_with_hmw.html",
                 mime="text/html"
             )
             
-            # 화면 표시 유지 (높이 1200으로 적용)
-            components.html(st.session_state.html_content, height=1200, scrolling=True)
+            # 화면 표시 유지 (내용이 길어졌으므로 height를 1500으로 상향 조정)
+            components.html(st.session_state.html_content, height=1500, scrolling=True)
             
     except Exception as e:
         st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
