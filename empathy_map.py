@@ -44,6 +44,9 @@ def sanitize_generated_html(html: str) -> str:
     html = re.sub(r"<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>", "", html, flags=re.IGNORECASE)
     html = re.sub(r"\s+on\w+\s*=\s*(['\"]).*?\1", "", html, flags=re.IGNORECASE | re.DOTALL)
     html = re.sub(r"\s+href\s*=\s*(['\"])\s*javascript:.*?\1", ' href="#"', html, flags=re.IGNORECASE | re.DOTALL)
+    # Gemini sometimes escapes the emphasis tags shown in the template instructions.
+    html = re.sub(r"&lt;\s*strong\s*&gt;", "<strong>", html, flags=re.IGNORECASE)
+    html = re.sub(r"&lt;\s*/\s*strong\s*&gt;", "</strong>", html, flags=re.IGNORECASE)
     return html
 # 페이지 설정
 st.set_page_config(page_title="설문조사 공감맵 생성기", layout="wide")
@@ -740,11 +743,11 @@ if uploaded_file is not None:
                                 </div>
                                 <div class="stmt-block needs">
                                     <div class="stmt-label">니즈 (Needs to)</div>
-                                    <div class="stmt-text">여기에 사용자가 진정으로 필요로 하는 것을 정의하세요. 중요한 부분은 &lt;strong&gt;강조&lt;/strong&gt;하세요.</div>
+                                    <div class="stmt-text">여기에 사용자가 진정으로 필요로 하는 것을 정의하세요. 중요한 부분은 <strong>강조</strong>하세요.</div>
                                 </div>
                                 <div class="stmt-block insight">
                                     <div class="stmt-label">인사이트 (Because)</div>
-                                    <div class="stmt-text">여기에 니즈가 발생하는 근본적인 원인과 맥락을 정의하세요. 중요한 부분은 &lt;strong&gt;강조&lt;/strong&gt;하세요.</div>
+                                    <div class="stmt-text">여기에 니즈가 발생하는 근본적인 원인과 맥락을 정의하세요. 중요한 부분은 <strong>강조</strong>하세요.</div>
                                 </div>
                             </div>
                         </div>
@@ -822,4 +825,3 @@ if uploaded_file is not None:
         st.error(f"입력 또는 생성 결과를 확인해 주세요: {e}")
     except Exception as e:
         st.error(f"처리 중 오류가 발생했습니다: {e}")
-
