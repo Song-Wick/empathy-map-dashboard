@@ -6,7 +6,7 @@ import re
 
 # ========== [Settings] ==========
 MAX_RESPONSES = 300
-MAX_SURVEY_CHARS = 12000
+MAX_SURVEY_CHARS = 24000
 ALLOWED_HTML_TAGS = ("<!DOCTYPE html", "<html", "<head", "<body")
 # =================================
 
@@ -55,6 +55,40 @@ def build_survey_text(series: pd.Series) -> tuple[str, int, int, bool]:
     survey_text = "\n- ".join(selected)
     was_truncated = original_count > len(selected) or len(survey_text) > MAX_SURVEY_CHARS
     return survey_text[:MAX_SURVEY_CHARS], original_count, len(selected), was_truncated
+
+
+def infer_subjective_columns(df: pd.DataFrame) -> list[str]:
+    subjective_columns = []
+    for column in df.columns:
+        if is_likely_text_response(df[column]):
+            subjective_columns.append(column)
+    return subjective_columns[:5]
+
+
+def build_multi_survey_text(df: pd.DataFrame, columns: list[str]) -> tuple[str, int, int, bool]:
+    blocks = []
+    original_count = 0
+    selected_count = 0
+
+    for column in columns:
+        responses = [
+            value.strip()
+            for value in df[column].dropna().astype(str)
+            if value.strip()
+        ]
+        if not responses:
+            continue
+
+        original_count += len(responses)
+        selected = responses[:MAX_RESPONSES]
+        selected_count += len(selected)
+        block = [f"[주관식 문항: {column}]"]
+        block.extend(f"- {response}" for response in selected)
+        blocks.append("\n".join(block))
+
+    survey_text = "\n\n".join(blocks)
+    was_truncated = original_count > selected_count or len(survey_text) > MAX_SURVEY_CHARS
+    return survey_text[:MAX_SURVEY_CHARS], original_count, selected_count, was_truncated
 
 
 DEMOGRAPHIC_KEYWORDS = (
@@ -161,16 +195,25 @@ def summarize_numeric_column(series: pd.Series) -> str:
 
 def build_quantitative_summary(
     df: pd.DataFrame,
-    subjective_column: str,
+    subjective_columns: list[str],
     selected_demographic_columns: list[str],
     selected_objective_columns: list[str],
     selected_numeric_columns: list[str],
 ) -> str:
     total_count = len(df)
-    subjective_valid = df[subjective_column].dropna().astype(str).str.strip().ne("").sum()
+    subjective_valid_by_column = {
+        column: int(df[column].dropna().astype(str).str.strip().ne("").sum())
+        for column in subjective_columns
+    }
+    subjective_total = sum(subjective_valid_by_column.values())
+    subjective_detail = ", ".join(
+        f"{column} {count}개" for column, count in subjective_valid_by_column.items()
+    )
     lines = [
         f"전체 응답자 수: {total_count}명",
-        f"주관식 유효 응답 수: {subjective_valid}명",
+        f"주관식 문항 수: {len(subjective_columns)}개",
+        f"주관식 유효 응답 수 합계: {subjective_total}개",
+        f"주관식 문항별 유효 응답 수: {subjective_detail if subjective_detail else '선택된 문항 없음'}",
         "",
         "[인구통계학 분석 대상]",
     ]
@@ -240,26 +283,31 @@ if uploaded_file is not None:
         st.dataframe(df.head(5))
         
         # 주관식 문항(열) 선택
-        target_column = st.selectbox("분석할 주관식 답변이 포함된 열(Column)을 선택하세요.", df.columns)
+        detected_subjective_columns = infer_subjective_columns(df)
+        target_columns = st.multiselect(
+            "분석할 주관식 답변 열(Column)을 모두 선택하세요. (여러 개 선택 가능)",
+            options=list(df.columns),
+            default=detected_subjective_columns,
+        )
 
-        detected_categorical_columns = infer_categorical_columns(df, [target_column])
+        detected_categorical_columns = infer_categorical_columns(df, target_columns)
         detected_demographic_columns = infer_demographic_columns(detected_categorical_columns)
-        detected_numeric_columns = infer_numeric_columns(df, [target_column])
+        detected_numeric_columns = infer_numeric_columns(df, target_columns)
 
         st.subheader("2. 객관식/인구통계 분석 열 확인")
         demographic_columns = st.multiselect(
             "인구통계학 분석에 사용할 열을 선택하세요. (성별, 연령, 소속, 전공 등)",
-            options=[column for column in df.columns if column != target_column],
+            options=[column for column in df.columns if column not in target_columns],
             default=detected_demographic_columns,
         )
         objective_columns = st.multiselect(
             "객관식/선택형 응답 분석에 사용할 열을 선택하세요.",
-            options=[column for column in df.columns if column != target_column],
+            options=[column for column in df.columns if column not in target_columns],
             default=detected_categorical_columns,
         )
         numeric_columns = st.multiselect(
             "기술통계 분석에 사용할 숫자형/척도형 열을 선택하세요. (만족도, 점수, 평점 등)",
-            options=[column for column in df.columns if column != target_column],
+            options=[column for column in df.columns if column not in target_columns],
             default=detected_numeric_columns,
         )
         
@@ -269,16 +317,20 @@ if uploaded_file is not None:
                 clean_api_key = get_gemini_api_key()
                 
                 # 데이터 전처리
-                survey_text, original_count, selected_count, was_truncated = build_survey_text(df[target_column])
+                if not target_columns:
+                    st.warning("분석할 주관식 답변 열을 1개 이상 선택해 주세요.")
+                    st.stop()
+
+                survey_text, original_count, selected_count, was_truncated = build_multi_survey_text(df, target_columns)
                 if not survey_text:
-                    st.warning("선택한 컬럼에 분석할 주관식 답변이 없습니다.")
+                    st.warning("선택한 주관식 열에 분석할 답변이 없습니다.")
                     st.stop()
                 if was_truncated:
-                    st.info(f"응답이 많아 {original_count}개 중 {selected_count}개, 최대 {MAX_SURVEY_CHARS:,}자까지만 분석합니다.")
+                    st.info(f"주관식 응답이 많아 총 {original_count}개 중 {selected_count}개, 최대 {MAX_SURVEY_CHARS:,}자까지만 분석합니다.")
 
                 quantitative_summary = build_quantitative_summary(
                     df,
-                    target_column,
+                    target_columns,
                     demographic_columns,
                     objective_columns,
                     numeric_columns,
@@ -295,9 +347,9 @@ if uploaded_file is not None:
                 1. 인구통계학 분석 (Demographic Analysis): 성별, 연령, 소속, 전공, 직무 등 응답자 구성의 핵심 특징과 표본 해석상 유의점 요약
                 2. 기술적 통계 분석 (Descriptive Statistics): 객관식/선택형 빈도와 비율, 숫자형/척도형 응답의 평균·중앙값·분산 경향을 바탕으로 주요 패턴 요약
                 3. 이슈 구조화 (Issue Structuring): 사용자, 요구사항, 목표, 문제점, 행동 추출
-                4. 공감 맵 (Empathy Map): Says, Thinks, Does, Feels 4가지 영역 분석
-                5. 네트워킹 분석 (Networking Analysis): 핵심 키워드 간의 관계를 서술형으로 분석
-                6. Pain Point 식별 (Pain Point Identification): 상호작용 레벨(지원방식 등 물리적 마찰), 사용자 여정 레벨(기획/제작 과정의 어려움), 장기적 관계 레벨(동기부여, 성취감 저하)로 3분류
+                4. 공감 맵 (Empathy Map): 여러 주관식 문항의 공통 감정과 문항별 차이를 함께 고려하여 Says, Thinks, Does, Feels 4가지 영역 분석
+                5. 네트워킹 분석 (Networking Analysis): 문항별 핵심 키워드와 전체 반복 키워드 간의 관계를 서술형으로 분석
+                6. Pain Point 식별 (Pain Point Identification): 여러 문항에서 반복되는 문제를 우선하되, 특정 문항에서만 드러난 중요한 신호도 반영하여 상호작용 레벨(지원방식 등 물리적 마찰), 사용자 여정 레벨(기획/제작 과정의 어려움), 장기적 관계 레벨(동기부여, 성취감 저하)로 3분류
                 7. 문제 재정의 (Problem Redefinition): 핵심 사용자(User)가 어떤 니즈(Needs to)를 가지고 있는지, 그리고 그 근본적인 이유/인사이트(Because)가 무엇인지 문장 형태로 도출
                 8. HMW (How Might We) 도출: 재정의된 문제를 바탕으로, 아래 [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 적용하여 긍정적이고 창의적인 해결책을 촉발할 수 있는 '우리가 어떻게 하면 ~할 수 있을까?' 질문을 최소 5개, 최대 7개 작성
                    - 설문 데이터와 Pain Point 근거가 충분한 기회 요소를 우선 선택하되, 가능하면 7요소가 고르게 검토되도록 하세요.
@@ -316,6 +368,8 @@ if uploaded_file is not None:
                 {quantitative_summary}
 
                 [주관식 설문 응답 데이터]
+                아래 응답은 여러 주관식 문항별로 구분되어 있습니다.
+                문항별 고유 인사이트와 여러 문항에서 반복되는 공통 Pain Point를 함께 분석하세요.
                 {survey_text}
 
                 {HMW_OPPORTUNITY_GUIDE}
