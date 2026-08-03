@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 from google import genai
 import streamlit.components.v1 as components
@@ -57,6 +57,148 @@ def build_survey_text(series: pd.Series) -> tuple[str, int, int, bool]:
     return survey_text[:MAX_SURVEY_CHARS], original_count, len(selected), was_truncated
 
 
+DEMOGRAPHIC_KEYWORDS = (
+    "성별", "연령", "나이", "학년", "학과", "전공", "직무", "직군", "부서", "소속",
+    "지역", "거주", "경력", "직업", "학교", "학부", "학위", "gender", "age",
+    "grade", "major", "department", "region", "career", "job", "role",
+)
+LIKERT_KEYWORDS = (
+    "만족", "점수", "평점", "효과", "이해", "난이도", "추천", "동의", "필요", "도움",
+    "satisfaction", "score", "rating", "effect", "recommend", "agree",
+)
+MAX_PROFILE_COLUMNS = 12
+MAX_LEVELS_PER_COLUMN = 8
+
+
+def is_likely_text_response(series: pd.Series) -> bool:
+    values = series.dropna().astype(str).str.strip()
+    if values.empty:
+        return False
+    avg_len = values.str.len().mean()
+    unique_ratio = values.nunique() / len(values)
+    return avg_len >= 25 and unique_ratio >= 0.45
+
+
+def infer_categorical_columns(df: pd.DataFrame, exclude_columns: list[str]) -> list[str]:
+    categorical_columns = []
+    excluded = set(exclude_columns)
+    for column in df.columns:
+        if column in excluded:
+            continue
+        series = df[column].dropna()
+        if series.empty or is_likely_text_response(series):
+            continue
+
+        unique_count = series.astype(str).str.strip().nunique()
+        unique_ratio = unique_count / len(series)
+        is_object_like = not pd.api.types.is_numeric_dtype(series)
+        is_low_cardinality_number = pd.api.types.is_numeric_dtype(series) and unique_count <= 12
+
+        if is_object_like or is_low_cardinality_number or unique_ratio <= 0.35:
+            categorical_columns.append(column)
+    return categorical_columns[:MAX_PROFILE_COLUMNS]
+
+
+def infer_numeric_columns(df: pd.DataFrame, exclude_columns: list[str]) -> list[str]:
+    numeric_columns = []
+    excluded = set(exclude_columns)
+    for column in df.columns:
+        if column in excluded:
+            continue
+        numeric = pd.to_numeric(df[column], errors="coerce").dropna()
+        if numeric.empty:
+            continue
+        unique_count = numeric.nunique()
+        unique_ratio = unique_count / len(numeric)
+        column_name = str(column).lower()
+        looks_like_id = unique_ratio > 0.9 and not any(keyword in column_name for keyword in LIKERT_KEYWORDS)
+        if not looks_like_id:
+            numeric_columns.append(column)
+    return numeric_columns[:MAX_PROFILE_COLUMNS]
+
+
+def infer_demographic_columns(categorical_columns: list[str]) -> list[str]:
+    demographic_columns = [
+        column for column in categorical_columns
+        if any(keyword.lower() in str(column).lower() for keyword in DEMOGRAPHIC_KEYWORDS)
+    ]
+    return demographic_columns[:6]
+
+
+def format_percent(value: float) -> str:
+    return f"{value:.1f}%"
+
+
+def summarize_categorical_column(series: pd.Series) -> str:
+    cleaned = series.dropna().astype(str).str.strip()
+    cleaned = cleaned[cleaned != ""]
+    if cleaned.empty:
+        return "유효 응답 없음"
+
+    counts = cleaned.value_counts().head(MAX_LEVELS_PER_COLUMN)
+    total = len(cleaned)
+    parts = [
+        f"{label}: {count}명({format_percent(count / total * 100)})"
+        for label, count in counts.items()
+    ]
+    if cleaned.nunique() > MAX_LEVELS_PER_COLUMN:
+        parts.append(f"기타 {cleaned.nunique() - MAX_LEVELS_PER_COLUMN}개 범주")
+    return "; ".join(parts)
+
+
+def summarize_numeric_column(series: pd.Series) -> str:
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric.empty:
+        return "유효 응답 없음"
+
+    std_value = numeric.std()
+    std_text = "0.00" if pd.isna(std_value) else f"{std_value:.2f}"
+    return (
+        f"유효 {len(numeric)}명, 평균 {numeric.mean():.2f}, 중앙값 {numeric.median():.2f}, "
+        f"표준편차 {std_text}, 최솟값 {numeric.min():.2f}, 최댓값 {numeric.max():.2f}"
+    )
+
+
+def build_quantitative_summary(
+    df: pd.DataFrame,
+    subjective_column: str,
+    selected_demographic_columns: list[str],
+    selected_objective_columns: list[str],
+    selected_numeric_columns: list[str],
+) -> str:
+    total_count = len(df)
+    subjective_valid = df[subjective_column].dropna().astype(str).str.strip().ne("").sum()
+    lines = [
+        f"전체 응답자 수: {total_count}명",
+        f"주관식 유효 응답 수: {subjective_valid}명",
+        "",
+        "[인구통계학 분석 대상]",
+    ]
+
+    if selected_demographic_columns:
+        for column in selected_demographic_columns:
+            lines.append(f"- {column}: {summarize_categorical_column(df[column])}")
+    else:
+        lines.append("- 자동 감지된 인구통계 컬럼이 없습니다. 객관식 분포를 기반으로 응답자 특성을 추론하세요.")
+
+    lines.extend(["", "[객관식/선택형 응답 빈도 및 비율]"])
+    objective_columns = [column for column in selected_objective_columns if column not in selected_demographic_columns]
+    if objective_columns:
+        for column in objective_columns:
+            lines.append(f"- {column}: {summarize_categorical_column(df[column])}")
+    else:
+        lines.append("- 분석할 객관식/선택형 컬럼이 선택되지 않았습니다.")
+
+    lines.extend(["", "[숫자형/척도형 기술통계]"])
+    if selected_numeric_columns:
+        for column in selected_numeric_columns:
+            lines.append(f"- {column}: {summarize_numeric_column(df[column])}")
+    else:
+        lines.append("- 분석할 숫자형/척도형 컬럼이 선택되지 않았습니다.")
+
+    return "\n".join(lines)
+
+
 def strip_markdown_code_fence(text: str) -> str:
     cleaned = text.strip()
     fenced = re.match(r"^```(?:html)?\s*(.*?)\s*```$", cleaned, flags=re.IGNORECASE | re.DOTALL)
@@ -77,8 +219,8 @@ def sanitize_generated_html(html: str) -> str:
     html = re.sub(r"&lt;\s*/\s*strong\s*&gt;", "</strong>", html, flags=re.IGNORECASE)
     return html
 # 페이지 설정
-st.set_page_config(page_title="설문조사 공감맵 생성기", layout="wide")
-st.title("📊 설문조사 공감맵 & HMW 대시보드 생성기")
+st.set_page_config(page_title="설문조사 통계·공감맵 생성기", layout="wide")
+st.title("📊 설문조사 통계 분석 & 공감맵 & HMW 대시보드 생성기")
 
 # 생성된 HTML 내용을 유지하기 위한 세션 상태 초기화
 if 'html_content' not in st.session_state:
@@ -99,10 +241,31 @@ if uploaded_file is not None:
         
         # 주관식 문항(열) 선택
         target_column = st.selectbox("분석할 주관식 답변이 포함된 열(Column)을 선택하세요.", df.columns)
+
+        detected_categorical_columns = infer_categorical_columns(df, [target_column])
+        detected_demographic_columns = infer_demographic_columns(detected_categorical_columns)
+        detected_numeric_columns = infer_numeric_columns(df, [target_column])
+
+        st.subheader("2. 객관식/인구통계 분석 열 확인")
+        demographic_columns = st.multiselect(
+            "인구통계학 분석에 사용할 열을 선택하세요. (성별, 연령, 소속, 전공 등)",
+            options=[column for column in df.columns if column != target_column],
+            default=detected_demographic_columns,
+        )
+        objective_columns = st.multiselect(
+            "객관식/선택형 응답 분석에 사용할 열을 선택하세요.",
+            options=[column for column in df.columns if column != target_column],
+            default=detected_categorical_columns,
+        )
+        numeric_columns = st.multiselect(
+            "기술통계 분석에 사용할 숫자형/척도형 열을 선택하세요. (만족도, 점수, 평점 등)",
+            options=[column for column in df.columns if column != target_column],
+            default=detected_numeric_columns,
+        )
         
         # 실행 버튼
-        if st.button("대시보드 생성하기 (Pain Point & HMW 포함)"):
-            with st.spinner('AI가 데이터를 분석하여 6단계 대시보드를 생성 중입니다. 다소 시간이 걸릴 수 있습니다...'):
+        if st.button("대시보드 생성하기 (통계 분석 & Pain Point & HMW 포함)"):
+            with st.spinner('AI가 데이터를 분석하여 8단계 대시보드를 생성 중입니다. 다소 시간이 걸릴 수 있습니다...'):
                 clean_api_key = get_gemini_api_key()
                 
                 # 데이터 전처리
@@ -112,21 +275,31 @@ if uploaded_file is not None:
                     st.stop()
                 if was_truncated:
                     st.info(f"응답이 많아 {original_count}개 중 {selected_count}개, 최대 {MAX_SURVEY_CHARS:,}자까지만 분석합니다.")
+
+                quantitative_summary = build_quantitative_summary(
+                    df,
+                    target_column,
+                    demographic_columns,
+                    objective_columns,
+                    numeric_columns,
+                )
                 
                 # 최신 구글 API 클라이언트 연결
                 client = genai.Client(api_key=clean_api_key)
                 
                 # HTML/CSS 가이드라인이 명시된 고도화 프롬프트
                 prompt = f"""
-                다음은 프로그램 참가자들의 주관식 설문조사 응답입니다.
-                이 데이터를 철저히 분석하여 아래 6가지 섹션을 도출하고, 제공된 HTML 템플릿의 내용(Text)을 분석 결과로 교체하여 완성해 주세요.
+                다음은 프로그램 참가자들의 설문조사 응답입니다.
+                객관식/숫자형 응답 요약과 주관식 응답을 함께 분석하여 아래 8가지 섹션을 도출하고, 제공된 HTML 템플릿의 내용(Text)을 분석 결과로 교체하여 완성해 주세요.
                 
-                1. 이슈 구조화 (Issue Structuring): 사용자, 요구사항, 목표, 문제점, 행동 추출
-                2. 공감 맵 (Empathy Map): Says, Thinks, Does, Feels 4가지 영역 분석
-                3. 네트워킹 분석 (Networking Analysis): 핵심 키워드 간의 관계를 서술형으로 분석
-                4. Pain Point 식별 (Pain Point Identification): 상호작용 레벨(지원방식 등 물리적 마찰), 사용자 여정 레벨(기획/제작 과정의 어려움), 장기적 관계 레벨(동기부여, 성취감 저하)로 3분류
-                5. 문제 재정의 (Problem Redefinition): 핵심 사용자(User)가 어떤 니즈(Needs to)를 가지고 있는지, 그리고 그 근본적인 이유/인사이트(Because)가 무엇인지 문장 형태로 도출
-                6. HMW (How Might We) 도출: 재정의된 문제를 바탕으로, 아래 [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 적용하여 긍정적이고 창의적인 해결책을 촉발할 수 있는 '우리가 어떻게 하면 ~할 수 있을까?' 질문을 최소 5개, 최대 7개 작성
+                1. 인구통계학 분석 (Demographic Analysis): 성별, 연령, 소속, 전공, 직무 등 응답자 구성의 핵심 특징과 표본 해석상 유의점 요약
+                2. 기술적 통계 분석 (Descriptive Statistics): 객관식/선택형 빈도와 비율, 숫자형/척도형 응답의 평균·중앙값·분산 경향을 바탕으로 주요 패턴 요약
+                3. 이슈 구조화 (Issue Structuring): 사용자, 요구사항, 목표, 문제점, 행동 추출
+                4. 공감 맵 (Empathy Map): Says, Thinks, Does, Feels 4가지 영역 분석
+                5. 네트워킹 분석 (Networking Analysis): 핵심 키워드 간의 관계를 서술형으로 분석
+                6. Pain Point 식별 (Pain Point Identification): 상호작용 레벨(지원방식 등 물리적 마찰), 사용자 여정 레벨(기획/제작 과정의 어려움), 장기적 관계 레벨(동기부여, 성취감 저하)로 3분류
+                7. 문제 재정의 (Problem Redefinition): 핵심 사용자(User)가 어떤 니즈(Needs to)를 가지고 있는지, 그리고 그 근본적인 이유/인사이트(Because)가 무엇인지 문장 형태로 도출
+                8. HMW (How Might We) 도출: 재정의된 문제를 바탕으로, 아래 [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 적용하여 긍정적이고 창의적인 해결책을 촉발할 수 있는 '우리가 어떻게 하면 ~할 수 있을까?' 질문을 최소 5개, 최대 7개 작성
                    - 설문 데이터와 Pain Point 근거가 충분한 기회 요소를 우선 선택하되, 가능하면 7요소가 고르게 검토되도록 하세요.
                    - 각 HMW는 서로 다른 기회 요소를 적용하고, h4에는 적용한 기회 요소와 해결 방향을 함께 표시하세요.
                    - p에는 사용자, 의도하는 행동/경험, 원하는 결과가 드러나는 완성형 질문을 작성하되, 브레인스토밍을 촉발하는 짧고 직관적인 한 문장으로 압축하세요.
@@ -139,7 +312,10 @@ if uploaded_file is not None:
                 - 템플릿 내부의 안내 텍스트(예: "여기에 분석 결과를 작성하세요")만 실제 분석 결과로 교체하세요.
                 - 마크다운 기호(```html 등)는 완전히 제외하고 순수 HTML 텍스트만 리턴해야 합니다.
                 
-                [설문 응답 데이터]
+                [객관식/인구통계/기술통계 요약]
+                {quantitative_summary}
+
+                [주관식 설문 응답 데이터]
                 {survey_text}
 
                 {HMW_OPPORTUNITY_GUIDE}
@@ -262,7 +438,44 @@ if uploaded_file is not None:
                             margin-left: 4px;
                         }}
 
-                        /* ── SECTION 1: ISSUE STRUCTURING ── */
+                        /* ── SECTION 1-2: QUANTITATIVE SUMMARY ── */
+                        .stat-grid {{
+                            display: grid;
+                            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                            gap: 14px;
+                            margin-bottom: 40px;
+                        }}
+                        .stat-card {{
+                            background: #ffffff;
+                            border: 0.5px solid #e3e8ef;
+                            border-radius: 10px;
+                            padding: 18px 20px;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+                        }}
+                        .stat-card.demographic {{ border-top: 4px solid #3b82f6; }}
+                        .stat-card.descriptive {{ border-top: 4px solid #10b981; }}
+                        .stat-card.insight {{ border-top: 4px solid #f59e0b; }}
+                        .stat-label {{
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: #8a95a3;
+                            text-transform: uppercase;
+                            letter-spacing: 0.05em;
+                            margin-bottom: 8px;
+                        }}
+                        .stat-value {{
+                            font-size: 13px;
+                            color: #1e2a3a;
+                            line-height: 1.7;
+                        }}
+                        .stat-value strong {{
+                            color: #065f46;
+                            background: #ecfdf5;
+                            padding: 0 4px;
+                            border-radius: 2px;
+                        }}
+
+                        /* ── SECTION 3: ISSUE STRUCTURING ── */
                         .issue-grid {{
                             display: grid;
                             grid-template-columns: 1fr 1fr;
@@ -616,6 +829,8 @@ if uploaded_file is not None:
                         <h1>프로그램 참가자 설문조사 분석 대시보드</h1>
                         <div class="header-sub">데이터 기반 설문 피드백 종합 분석 및 문제 해결 도출</div>
                         <div class="header-divider">
+                            <span class="header-pill">인구통계 분석</span>
+                            <span class="header-pill">기술통계 분석</span>
                             <span class="header-pill">이슈 구조화</span>
                             <span class="header-pill">공감 맵</span>
                             <span class="header-pill">네트워킹 분석</span>
@@ -626,6 +841,54 @@ if uploaded_file is not None:
                     <div class="content">
                         <div class="section-label">
                             <div class="section-number">1</div>
+                            <div>
+                                <span class="section-title">인구통계학 분석</span>
+                                <span class="section-title-en">Demographic Analysis</span>
+                            </div>
+                        </div>
+                        <div class="stat-grid">
+                            <div class="stat-card demographic">
+                                <div class="stat-label">응답자 구성</div>
+                                <div class="stat-value">여기에 성별, 연령, 소속, 전공 등 인구통계학적 구성의 핵심 분포를 작성하세요. 중요한 수치와 비율은 <strong>강조</strong>하세요.</div>
+                            </div>
+                            <div class="stat-card demographic">
+                                <div class="stat-label">주요 표본 특성</div>
+                                <div class="stat-value">여기에 응답자 집단에서 두드러지는 특성과 분석 해석 시 고려해야 할 표본 편향 또는 맥락을 작성하세요.</div>
+                            </div>
+                            <div class="stat-card insight">
+                                <div class="stat-label">해석 포인트</div>
+                                <div class="stat-value">여기에 인구통계 특성이 주관식 응답, Pain Point, HMW 해석에 주는 시사점을 작성하세요.</div>
+                            </div>
+                        </div>
+
+                        <div class="section-divider"></div>
+
+                        <div class="section-label">
+                            <div class="section-number">4</div>
+                            <div>
+                                <span class="section-title">기술적 통계 분석</span>
+                                <span class="section-title-en">Descriptive Statistics</span>
+                            </div>
+                        </div>
+                        <div class="stat-grid">
+                            <div class="stat-card descriptive">
+                                <div class="stat-label">객관식 응답 패턴</div>
+                                <div class="stat-value">여기에 객관식/선택형 응답의 상위 빈도, 비율, 쏠림 현상, 응답 분산을 요약하세요.</div>
+                            </div>
+                            <div class="stat-card descriptive">
+                                <div class="stat-label">숫자형/척도형 지표</div>
+                                <div class="stat-value">여기에 만족도, 점수, 평점 등 숫자형 문항의 평균, 중앙값, 표준편차, 최솟값/최댓값에서 드러나는 경향을 작성하세요.</div>
+                            </div>
+                            <div class="stat-card insight">
+                                <div class="stat-label">정량-정성 연결</div>
+                                <div class="stat-value">여기에 객관식/기술통계 결과가 주관식 의견의 감정, 요구, Pain Point와 어떻게 연결되는지 작성하세요.</div>
+                            </div>
+                        </div>
+
+                        <div class="section-divider"></div>
+
+                        <div class="section-label">
+                            <div class="section-number">5</div>
                             <div>
                                 <span class="section-title">이슈 구조화</span>
                                 <span class="section-title-en">Issue Structuring</span>
@@ -737,7 +1000,7 @@ if uploaded_file is not None:
                         <div class="section-divider"></div>
 
                         <div class="section-label">
-                            <div class="section-number">4</div>
+                            <div class="section-number">6</div>
                             <div>
                                 <span class="section-title">Pain Point 식별 및 구조화</span>
                                 <span class="section-title-en">Pain Point Identification</span>
@@ -765,7 +1028,7 @@ if uploaded_file is not None:
                         </div>
 
                         <div class="section-label">
-                            <div class="section-number">5</div>
+                            <div class="section-number">7</div>
                             <div>
                                 <span class="section-title">문제 재정의</span>
                                 <span class="section-title-en">Problem Redefinition</span>
@@ -789,7 +1052,7 @@ if uploaded_file is not None:
                         </div>
 
                         <div class="section-label">
-                            <div class="section-number">6</div>
+                            <div class="section-number">8</div>
                             <div>
                                 <span class="section-title">How Might We (HMW) 도출</span>
                                 <span class="section-title-en">Ideation Trigger</span>
@@ -870,18 +1133,18 @@ if uploaded_file is not None:
                 
         # 생성된 대시보드가 세션 상태에 존재하면 화면에 출력
         if st.session_state.html_content is not None:
-            st.subheader("2. 감정 신호 분석 기반 공감 맵 & 문제 정의 대시보드")
+            st.subheader("3. 통계 분석 기반 공감 맵 & 문제 정의 대시보드")
             
             # 다운로드 버튼 추가
             st.download_button(
                 label="📥 대시보드 다운로드 (HTML)",
                 data=st.session_state.html_content,
-                file_name="survey_dashboard_with_hmw.html",
+                file_name="survey_dashboard_with_statistics_hmw.html",
                 mime="text/html"
             )
             
-            # 화면 표시 유지 (내용이 길어졌으므로 height를 1500으로 상향 조정)
-            components.html(st.session_state.html_content, height=1500, scrolling=True)
+            # 화면 표시 유지 (통계 섹션이 추가되어 height를 상향 조정)
+            components.html(st.session_state.html_content, height=2100, scrolling=True)
             
     except pd.errors.EmptyDataError:
         st.error("업로드한 파일에 데이터가 없습니다.")
@@ -889,4 +1152,3 @@ if uploaded_file is not None:
         st.error(f"입력 또는 생성 결과를 확인해 주세요: {e}")
     except Exception as e:
         st.error(f"처리 중 오류가 발생했습니다: {e}")
-
