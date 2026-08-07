@@ -15,7 +15,7 @@ plt.switch_backend('Agg')
 
 # Set page config
 st.set_page_config(
-    page_title="설문조사 통계 및 공감맵/HMW 대시보드",
+    page_title="설문조사 2단계 입체 분석 대시보드",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -192,6 +192,26 @@ def inject_custom_css():
             color: #64748b;
             margin-top: 4px;
         }
+        
+        /* Guide Box Styling */
+        .guide-box {
+            background-color: #f8fafc;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            border-radius: 4px 8px 8px 4px;
+            margin-bottom: 20px;
+            font-size: 13.5px;
+            color: #334155;
+            line-height: 1.6;
+        }
+        .guide-title {
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -298,18 +318,16 @@ def build_survey_text_summary(df: pd.DataFrame, columns: list[str]) -> str:
 
 def build_quantitative_summary(
     df: pd.DataFrame,
-    subjective_columns: list[str],
     selected_demographic_columns: list[str],
     selected_objective_columns: list[str],
     selected_numeric_columns: list[str],
 ) -> str:
     lines = [
         f"전체 응답자 수: {len(df)}명",
-        f"주관식 문항 수: {len(subjective_columns)}개",
         ""
     ]
     if selected_demographic_columns:
-        lines.append("[인구통계 정보]")
+        lines.append("[인구통계 구성 비율]")
         for col in selected_demographic_columns:
             counts = df[col].dropna().value_counts().head(5)
             total = len(df[col].dropna())
@@ -317,7 +335,7 @@ def build_quantitative_summary(
             lines.append(f"- {col}: {summary}")
             
     if selected_objective_columns:
-        lines.append("\n[객관식 문항 분포]")
+        lines.append("\n[객관식 설문 문항 응답 비율]")
         for col in selected_objective_columns:
             counts = df[col].dropna().value_counts().head(5)
             total = len(df[col].dropna())
@@ -325,23 +343,24 @@ def build_quantitative_summary(
             lines.append(f"- {col}: {summary}")
 
     if selected_numeric_columns:
-        lines.append("\n[기술통계 지표]")
+        lines.append("\n[척도 만족도 평균 지표]")
         for col in selected_numeric_columns:
             numeric = pd.to_numeric(df[col], errors="coerce").dropna()
             if not numeric.empty:
-                lines.append(f"- {col}: 평균 {numeric.mean():.2f}, 중앙값 {numeric.median():.2f}")
+                lines.append(f"- {col}: 평균 {numeric.mean():.2f}점 (중앙값 {numeric.median():.2f}점)")
     return "\n".join(lines)
 
 # ========== [App Header] ==========
 inject_custom_css()
 st.markdown("""
     <div class="premium-header">
-        <h1>📊 설문조사 입체적 종합 분석 대시보드</h1>
-        <p>정량적 기술 통계부터 AI 기반 공감맵, 동시출현 네트워크 분석 및 창의적 HMW 도출까지 설문 데이터를 입체적으로 시각화합니다.</p>
+        <h1>📊 설문조사 2단계 입체 분석 대시보드</h1>
+        <p>1단계 객관식 통계(정량) 분석을 마친 후, 2단계 주관식 텍스트(정성) 분석을 진행하여 데이터를 입체적으로 시각화합니다.</p>
     </div>
 """, unsafe_allow_html=True)
 
 # ========== [Sidebar Configuration] ==========
+# 1. API key configuration block
 st.sidebar.markdown("### 🔑 API 설정")
 if st.secrets.get("GEMINI_API_KEY", ""):
     st.sidebar.success("✅ Gemini API Key 자동 적용됨 (보안 유지 중)")
@@ -356,716 +375,797 @@ else:
         st.session_state["gemini_api_key"] = gemini_key_input
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 📂 데이터 소스 업로드")
-uploaded_file = st.sidebar.file_uploader("설문조사 결과 파일 업로드 (CSV 또는 Excel)", type=['csv', 'xlsx'])
 
-# ========== [Core Processing Logic] ==========
-if uploaded_file is not None:
-    # Load dataset
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file)
-        else:
-            df_raw = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"파일을 읽는 도중 오류가 발생했습니다: {e}")
-        st.stop()
-        
-    st.sidebar.success("성공적으로 업로드되었습니다!")
+# 2. Stage Navigation
+stage = st.sidebar.radio(
+    "🔍 분석 단계 선택",
+    ["Stage 1: 객관식 데이터 분석 (정량)", "Stage 2: 주관식 데이터 분석 (정성)"]
+)
+
+# 3. File Upload & Column Selector Logic based on active Stage
+if stage == "Stage 1: 객관식 데이터 분석 (정량)":
+    st.sidebar.markdown("### 📂 [Stage 1] 객관식 파일 업로드")
+    uploaded_file_obj = st.sidebar.file_uploader(
+        "객관식 결과 파일 업로드 (CSV/Excel)", 
+        type=['csv', 'xlsx'],
+        help="성별, 만족도 점수 등 정량 데이터가 들어있는 파일을 업로드해 주세요."
+    )
     
-    # Session state for data persistence
-    if "df" not in st.session_state:
-        st.session_state.df = df_raw.copy()
-        st.session_state.raw_df = df_raw.copy()
-        
-    df = st.session_state.df
-    
-    # Step definition
-    steps = ["Step 1: 데이터 업로드 및 전처리", 
-             "Step 2: 인구통계 분석", 
-             "Step 3: 기술 통계 분석", 
-             "Step 4: 공감 맵 분석", 
-             "Step 5: 네트워크 분석", 
-             "Step 6: HMW 도출"]
-             
-    tabs = st.tabs(steps)
-    
-    # ------------------ [Step 1: Preprocessing] ------------------
-    with tabs[0]:
-        st.subheader("🛠️ 데이터 전처리 및 확인")
-        
-        col_prep_1, col_prep_2 = st.columns([1, 3])
-        with col_prep_1:
-            st.markdown("##### 전처리 설정")
-            do_preprocess = st.radio("데이터 전처리를 수행하시겠습니까?", ["아니오 (기본값 사용)", "예 (결측치 제거 및 공백 정제)"], index=0)
-            
-            if do_preprocess == "예 (결측치 제거 및 공백 정제)":
-                if st.button("전처리 실행하기"):
-                    cleaned_df = st.session_state.raw_df.copy()
-                    # 1. Drop rows where all elements are NaN
-                    cleaned_df = cleaned_df.dropna(how='all')
-                    # 2. String values strip whitespace
-                    for col in cleaned_df.columns:
-                        if cleaned_df[col].dtype == "object":
-                            cleaned_df[col] = cleaned_df[col].astype(str).str.strip()
-                            # Replace empty strings with NaN
-                            cleaned_df[col] = cleaned_df[col].replace(r'^\s*$', np.nan, regex=True)
-                    
-                    st.session_state.df = cleaned_df
-                    st.success("데이터 전처리가 완료되었습니다!")
-                    st.rerun()
+    if uploaded_file_obj is not None:
+        try:
+            if uploaded_file_obj.name.endswith('.csv'):
+                df_raw = pd.read_csv(uploaded_file_obj)
             else:
-                if st.button("원본 데이터로 복원"):
-                    st.session_state.df = st.session_state.raw_df.copy()
-                    st.info("원본 데이터 상태로 복원되었습니다.")
-                    st.rerun()
-                    
-        with col_prep_2:
-            st.markdown("##### 데이터 구조 요약")
-            shape_col_1, shape_col_2, shape_col_3 = st.columns(3)
-            with shape_col_1:
-                st.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(st.session_state.raw_df)}</div><div class="kpi-label">원본 행(Rows) 수</div></div>', unsafe_allow_html=True)
-            with shape_col_2:
-                st.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(df)}</div><div class="kpi-label">현재 행(Rows) 수</div></div>', unsafe_allow_html=True)
-            with shape_col_3:
-                st.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(df.columns)}</div><div class="kpi-label">열(Columns) 수</div></div>', unsafe_allow_html=True)
-                
-        st.markdown("##### 현재 데이터셋 미리보기 (상위 5개 행)")
-        st.dataframe(df.head(5), use_container_width=True)
-        
-    # Infer columns based on current state of df
-    detected_sub = infer_subjective_columns(df)
-    
-    # Save column selections globally in session state
-    if "selected_sub_cols" not in st.session_state:
-        st.session_state.selected_sub_cols = detected_sub
-        
-    # Main column settings globally accessible
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📊 컬럼 분석 구성")
-    
-    sub_cols = st.sidebar.multiselect(
-        "주관식 서술형 열 선택",
-        options=list(df.columns),
-        default=[c for c in detected_sub if c in df.columns]
-    )
-    st.session_state.selected_sub_cols = sub_cols
-    
-    detected_cat = infer_categorical_columns(df, sub_cols)
-    detected_dem = infer_demographic_columns(detected_cat)
-    detected_num = infer_numeric_columns(df, sub_cols)
-    
-    dem_cols = st.sidebar.multiselect(
-        "인구통계학(범주형) 열 선택",
-        options=[c for c in df.columns if c not in sub_cols],
-        default=[c for c in detected_dem if c in df.columns]
-    )
-    
-    obj_cols = st.sidebar.multiselect(
-        "객관식/범주형 열 선택",
-        options=[c for c in df.columns if c not in sub_cols],
-        default=[c for c in detected_cat if c in df.columns and c not in dem_cols]
-    )
-    
-    num_cols = st.sidebar.multiselect(
-        "수치형/척도형 열 선택",
-        options=[c for c in df.columns if c not in sub_cols],
-        default=[c for c in detected_num if c in df.columns]
-    )
-    
-    # ------------------ [Step 2: Demographic Analysis] ------------------
-    with tabs[1]:
-        st.subheader("👥 인구통계 및 범주형 응답 분석")
-        if not dem_cols:
-            st.info("인구통계학 열이 선택되지 않았습니다. 사이드바에서 분석할 인구통계학 열을 구성해 주세요.")
-        else:
-            selected_dem_col = st.selectbox("분석 대상 인구통계 열 선택", dem_cols)
+                df_raw = pd.read_excel(uploaded_file_obj)
             
-            # Compute frequency & ratio
-            series = df[selected_dem_col].dropna().astype(str).str.strip()
-            if series.empty:
-                st.warning("선택된 열에 유효한 응답이 없습니다.")
+            # Save to session state
+            if "raw_df_obj" not in st.session_state or st.session_state.get("uploaded_filename_obj") != uploaded_file_obj.name:
+                st.session_state.raw_df_obj = df_raw.copy()
+                st.session_state.df_obj = df_raw.copy()
+                st.session_state.uploaded_filename_obj = uploaded_file_obj.name
+        except Exception as e:
+            st.error(f"파일을 읽는 도중 오류가 발생했습니다: {e}")
+            st.stop()
+            
+    if "df_obj" in st.session_state:
+        df_obj = st.session_state.df_obj
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 📊 정량 컬럼 분석 구성")
+        
+        # Categorical and Numeric column inferences
+        detected_cat = infer_categorical_columns(df_obj, [])
+        detected_dem = infer_demographic_columns(detected_cat)
+        detected_num = infer_numeric_columns(df_obj, [])
+        
+        dem_cols = st.sidebar.multiselect(
+            "인구통계학(성별, 연령 등) 열 선택",
+            options=list(df_obj.columns),
+            default=[c for c in detected_dem if c in df_obj.columns]
+        )
+        
+        obj_cols = st.sidebar.multiselect(
+            "객관식/선택형 열 선택",
+            options=list(df_obj.columns),
+            default=[c for c in detected_cat if c in df_obj.columns and c not in dem_cols]
+        )
+        
+        num_cols = st.sidebar.multiselect(
+            "수치형/5점척도 열 선택",
+            options=list(df_obj.columns),
+            default=[c for c in detected_num if c in df_obj.columns]
+        )
+        
+        # Keep quantitative summary updated in session state
+        st.session_state.quant_summary = build_quantitative_summary(df_obj, dem_cols, obj_cols, num_cols)
+
+elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
+    st.sidebar.markdown("### 📂 [Stage 2] 주관식 파일 업로드")
+    uploaded_file_sub = st.sidebar.file_uploader(
+        "주관식 결과 파일 업로드 (CSV/Excel)", 
+        type=['csv', 'xlsx'],
+        help="사용자 의견 등 텍스트 주관식 데이터가 들어있는 파일을 업로드해 주세요."
+    )
+    
+    if uploaded_file_sub is not None:
+        try:
+            if uploaded_file_sub.name.endswith('.csv'):
+                df_raw = pd.read_csv(uploaded_file_sub)
             else:
-                total_valid = len(series)
-                counts = series.value_counts()
-                df_freq = pd.DataFrame({
-                    selected_dem_col: counts.index,
-                    '빈도': counts.values,
-                    '비율(%)': (counts.values / total_valid * 100).round(1)
-                })
+                df_raw = pd.read_excel(uploaded_file_sub)
+            
+            # Save to session state
+            if "raw_df_sub" not in st.session_state or st.session_state.get("uploaded_filename_sub") != uploaded_file_sub.name:
+                st.session_state.raw_df_sub = df_raw.copy()
+                st.session_state.df_sub = df_raw.copy()
+                st.session_state.uploaded_filename_sub = uploaded_file_sub.name
+        except Exception as e:
+            st.error(f"파일을 읽는 도중 오류가 발생했습니다: {e}")
+            st.stop()
+            
+    if "df_sub" in st.session_state:
+        df_sub = st.session_state.df_sub
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### ✍️ 주관식 컬럼 분석 구성")
+        
+        detected_sub = infer_subjective_columns(df_sub)
+        sub_cols = st.sidebar.multiselect(
+            "주관식 서술형 열 선택",
+            options=list(df_sub.columns),
+            default=[c for c in detected_sub if c in df_sub.columns]
+        )
+
+# ========== [Main Dashboard Render] ==========
+client = get_gemini_client()
+
+if stage == "Stage 1: 객관식 데이터 분석 (정량)":
+    # ------------------ [Stage 1 Render] ------------------
+    if "df_obj" not in st.session_state:
+        # Welcome screen for Stage 1
+        st.markdown("""
+            ### 👋 [Stage 1] 객관식 데이터 분석에 오신 것을 환영합니다!
+            
+            이 단계에서는 설문조사의 **정량적인 통계 정보**를 분석합니다. 
+            성별이나 연령대와 같은 **인구통계 정보**, 그리고 만족도 평점과 같은 **숫자형 척도 데이터**를 집계하고 시각화할 수 있습니다.
+            
+            #### 💡 시작하는 방법:
+            1. 왼쪽 사이드바에서 **객관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
+               * 테스트가 필요하신 경우 워크스페이스에 생성된 `mock_objective_data.csv` 파일을 사용하실 수 있습니다.
+            2. 파일 업로드 후, 데이터 결측치를 정제(Step 1)하고, 인구통계 분포(Step 2)와 만족도 기술 통계(Step 3) 탭을 통해 분석을 진행해 보세요.
+        """)
+    else:
+        df_obj = st.session_state.df_obj
+        
+        # Tabs for Steps 1~3
+        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 기술 통계 분석"])
+        
+        # --- Step 1: Preprocessing ---
+        with tabs_obj[0]:
+            st.subheader("🛠️ 객관식 데이터 전처리 및 확인")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 1. 데이터 전처리 가이드</div>
+                    업로드한 객관식 설문 원본 데이터에서 빈 데이터(NaN)를 정제하고, 문자열 값의 불필요한 앞뒤 공백을 제거하여 정확한 통계 집계가 가능하도록 데이터를 깨끗이 정제하는 단계입니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            col_prep_1, col_prep_2 = st.columns([1, 3])
+            with col_prep_1:
+                st.markdown("##### 전처리 설정")
+                do_preprocess = st.radio("데이터 전처리를 수행하시겠습니까?", ["아니오 (기본값 사용)", "예 (결측치 제거 및 공백 정제)"], index=0)
                 
-                col_d_1, col_d_2 = st.columns([1, 1])
-                with col_d_1:
-                    st.markdown(f"##### {selected_dem_col} 빈도 분석 테이블")
-                    st.dataframe(df_freq, use_container_width=True, hide_index=True)
-                    
-                    # Copy and Download options
-                    st.markdown("🤖 **복사 및 다운로드**")
-                    tsv_data = df_freq.to_csv(sep='\t', index=False)
-                    st.code(tsv_data, language='text')
-                    st.caption("위 텍스트 박스 우측의 복사 버튼을 눌러 스프레드시트 등에 바로 붙여넣으세요.")
-                    
-                    csv_data = df_freq.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(
-                        label="📥 CSV 다운로드",
-                        data=csv_data,
-                        file_name=f"demographic_{selected_dem_col}.csv",
-                        mime="text/csv"
-                    )
-                    
-                with col_d_2:
-                    st.markdown("##### 시각화 차트")
-                    chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"])
-                    
-                    if chart_type == "원형 차트 (Pie Chart)":
-                        fig = px.pie(df_freq, names=selected_dem_col, values='빈도', 
-                                     title=f"{selected_dem_col} 분포 비율",
-                                     color_discrete_sequence=px.colors.qualitative.Safe)
-                    else:
-                        fig = px.bar(df_freq, x=selected_dem_col, y='빈도', 
-                                     title=f"{selected_dem_col} 빈도수",
-                                     color=selected_dem_col,
-                                     color_discrete_sequence=px.colors.qualitative.Safe)
-                    
-                    fig.update_layout(font=dict(family="Noto Sans KR"))
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Static PNG Download Option via Matplotlib fallback
-                    try:
-                        plt.figure(figsize=(6, 4))
-                        if chart_type == "원형 차트 (Pie Chart)":
-                            plt.pie(df_freq['빈도'], labels=df_freq[selected_dem_col], autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
-                            plt.title(f"{selected_dem_col} 분포 비율")
-                        else:
-                            plt.bar(df_freq[selected_dem_col], df_freq['빈도'], color='#3b82f6')
-                            plt.ylabel("빈도 (명)")
-                            plt.title(f"{selected_dem_col} 빈도수")
-                            plt.xticks(rotation=45)
-                        plt.tight_layout()
-                        img_buf = io.BytesIO()
-                        plt.savefig(img_buf, format='png', dpi=150)
-                        img_buf.seek(0)
-                        plt.close()
+                if do_preprocess == "예 (결측치 제거 및 공백 정제)":
+                    if st.button("전처리 실행하기"):
+                        cleaned_df = st.session_state.raw_df_obj.copy()
+                        cleaned_df = cleaned_df.dropna(how='all')
+                        for col in cleaned_df.columns:
+                            if cleaned_df[col].dtype == "object":
+                                cleaned_df[col] = cleaned_df[col].astype(str).str.strip()
+                                cleaned_df[col] = cleaned_df[col].replace(r'^\s*$', np.nan, regex=True)
+                        st.session_state.df_obj = cleaned_df
+                        st.success("객관식 데이터 전처리 완료!")
+                        st.rerun()
+                else:
+                    if st.button("원본 데이터로 복원"):
+                        st.session_state.df_obj = st.session_state.raw_df_obj.copy()
+                        st.info("원본 객관식 데이터로 복원되었습니다.")
+                        st.rerun()
                         
-                        st.download_button(
-                            label="🖼️ 차트 PNG 이미지 다운로드",
-                            data=img_buf,
-                            file_name=f"chart_{selected_dem_col}.png",
-                            mime="image/png"
-                        )
-                    except Exception as e:
-                        st.caption(f"차트 PNG 생성 중 일시적 오류: {e}")
-
-    # ------------------ [Step 3: Descriptive Analysis] ------------------
-    with tabs[2]:
-        st.subheader("📈 수치형 및 척도 만족도 기술 통계")
-        if not num_cols:
-            st.info("수치형 또는 척도형(만족도 등) 열이 선택되지 않았습니다. 사이드바에서 열을 선택해 주세요.")
-        else:
-            desc_rows = []
-            for col in num_cols:
-                numeric = pd.to_numeric(df[col], errors="coerce").dropna()
-                if not numeric.empty:
-                    desc_rows.append({
-                        '문항': col,
-                        '응답 수': len(numeric),
-                        '평균': round(numeric.mean(), 2),
-                        '표준편차': round(numeric.std(), 2) if len(numeric) > 1 else 0.0,
-                        '중앙값': round(numeric.median(), 2),
-                        '최솟값': round(numeric.min(), 2),
-                        '최댓값': round(numeric.max(), 2)
+            with col_prep_2:
+                st.markdown("##### 데이터 구조 요약")
+                shape_col_1, shape_col_2, shape_col_3 = st.columns(3)
+                with shape_col_1:
+                    st.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(st.session_state.raw_df_obj)}</div><div class="kpi-label">원본 행(Rows) 수</div></div>', unsafe_allow_html=True)
+                with shape_col_2:
+                    st.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(df_obj)}</div><div class="kpi-label">현재 정제된 행 수</div></div>', unsafe_allow_html=True)
+                with shape_col_3:
+                    st.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(df_obj.columns)}</div><div class="kpi-label">열(Columns) 수</div></div>', unsafe_allow_html=True)
+                    
+            st.markdown("##### 객관식 데이터셋 미리보기 (상위 5개 행)")
+            st.dataframe(df_obj.head(5), use_container_width=True)
+            
+        # --- Step 2: Demographic Analysis ---
+        with tabs_obj[1]:
+            st.subheader("👥 인구통계 및 범주형 분포 분석")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 2. 인구통계 분석 가이드</div>
+                    성별, 연령대, 직급, 직무 등 범주별 집단 비율을 확인하는 단계입니다. 
+                    집계된 빈도 테이블은 클립보드 복사 혹은 CSV 다운로드를 통해 엑셀로 내보낼 수 있으며, 생성된 파이/바 차트는 이미지 파일(PNG)로 바로 저장이 가능합니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not dem_cols:
+                st.info("사이드바에서 분석할 '인구통계학(범주형) 열'을 1개 이상 선택해 주세요.")
+            else:
+                selected_dem_col = st.selectbox("집계할 인구통계 컬럼 선택", dem_cols)
+                series = df_obj[selected_dem_col].dropna().astype(str).str.strip()
+                
+                if series.empty:
+                    st.warning("선택한 컬럼에 분석 가능한 유효 데이터가 없습니다.")
+                else:
+                    total_valid = len(series)
+                    counts = series.value_counts()
+                    df_freq = pd.DataFrame({
+                        selected_dem_col: counts.index,
+                        '빈도': counts.values,
+                        '비율(%)': (counts.values / total_valid * 100).round(1)
                     })
                     
-            if not desc_rows:
-                st.warning("선택된 열들에서 유효한 수치형 데이터를 분석할 수 없습니다.")
-            else:
-                df_desc = pd.DataFrame(desc_rows)
-                st.dataframe(df_desc, use_container_width=True, hide_index=True)
-                
-                # Copy and Download options
-                st.markdown("🤖 **복사 및 다운로드**")
-                tsv_desc = df_desc.to_csv(sep='\t', index=False)
-                st.code(tsv_desc, language='text')
-                st.caption("위 텍스트 박스 우측의 복사 버튼을 눌러 클립보드에 담을 수 있습니다.")
-                
-                csv_desc = df_desc.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label="📥 CSV 다운로드",
-                    data=csv_desc,
-                    file_name="descriptive_statistics.csv",
-                    mime="text/csv"
-                )
-                
-                # Simple Plotly Bar Chart comparing means
-                st.markdown("##### 평균값 비교 시각화")
-                fig_mean = px.bar(df_desc, x='문항', y='평균', text='평균',
-                                  title="척도형 문항 평균 비교",
-                                  color='평균', color_continuous_scale=px.colors.sequential.Teal)
-                fig_mean.update_traces(textposition='outside')
-                fig_mean.update_layout(font=dict(family="Noto Sans KR"))
-                st.plotly_chart(fig_mean, use_container_width=True)
-
-    # Check for Gemini Client
-    client = get_gemini_client()
-    
-    # ------------------ [Step 4: Empathy Map Analysis] ------------------
-    with tabs[3]:
-        st.subheader("💡 AI 기반 주관식 응답 공감 맵(Empathy Map)")
-        
-        if not sub_cols:
-            st.warning("주관식 답변 열을 1개 이상 선택해 주세요.")
-        elif client is None:
-            st.warning("공감 맵 분석을 진행하려면 사이드바에 **Gemini API Key**를 입력해 주세요.")
-        else:
-            survey_text = build_survey_text_summary(df, sub_cols)
-            
-            st.info("선택된 주관식 응답 내용을 분석하여 공감맵(Says, Thinks, Does, Feels)을 자동 구성합니다.")
-            
-            # Perform Gemini Analysis
-            if st.button("공감 맵 분석 실행", key="run_empathy_map"):
-                with st.spinner("Gemini AI가 주관식 응답의 감정과 태도를 입체적으로 분류 중입니다..."):
-                    prompt = f"""
-                    설문조사의 주관식 답변 데이터를 바탕으로, 대상 사용자의 심리를 분석하여 2x2 공감 맵(Empathy Map)을 작성해주세요.
-                    공감 맵은 다음 4가지 영역으로 구성됩니다:
-                    1. Says (말하는 것): 사용자가 겉으로 표현한 대표적인 의견, 요구사항, 피드백
-                    2. Thinks (생각하는 것): 사용자가 명시적으로 말하지는 않았지만 마음속으로 고민하거나 바라는 생각/기대
-                    3. Does (행동하는 것): 사용자가 직면한 상황에서 취하는 구체적인 행동, 프로세스, 습관
-                    4. Feels (느끼는 것): 사용자가 느끼는 긍정적/부정적/중립적 감정, 불안, 기쁨, 답답함
-
-                    [주관식 답변 데이터]
-                    {survey_text}
-
-                    [출력 형식]
-                    반드시 다음 JSON 형식으로만 응답해주세요. 다른 부연 설명이나 마크다운 코드 펜스는 제외해주세요.
-                    {{
-                      "says": ["의견 1", "의견 2", "의견 3", "의견 4"],
-                      "thinks": ["고민 1", "고민 2", "고민 3", "고민 4"],
-                      "does": ["행동 1", "행동 2", "행동 3", "행동 4"],
-                      "feels": [
-                        {{"text": "감정 1", "type": "pos"}},
-                        {{"text": "감정 2", "type": "neg"}},
-                        {{"text": "감정 3", "type": "neu"}},
-                        {{"text": "감정 4", "type": "neg"}}
-                      ]
-                    }}
-                    (참고: feels의 type은 'pos'(긍정), 'neg'(부정), 'neu'(중립) 중 하나로 지정해주세요. 각 영역별로 최소 4개씩 도출해주세요.)
-                    """
-                    
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=prompt,
-                            config={'temperature': 0.1}
-                        )
-                        empathy_dict = parse_json_from_response(response.text)
-                        st.session_state.empathy_data = empathy_dict
-                        st.success("공감 맵 분석이 완료되었습니다!")
-                    except Exception as e:
-                        st.error(f"분석 중 오류 발생: {e}")
+                    col_d_1, col_d_2 = st.columns([1, 1])
+                    with col_d_1:
+                        st.markdown(f"##### {selected_dem_col} 빈도 분포표")
+                        st.dataframe(df_freq, use_container_width=True, hide_index=True)
                         
-            # Render Empathy Map if exists in session state
-            if "empathy_data" in st.session_state:
-                em_data = st.session_state.empathy_data
-                
-                # Render 2x2 grid using HTML cards
-                col1, col2 = st.columns(2)
-                with col1:
-                    says_html = "".join([f"<li>{item}</li>" for item in em_data.get("says", [])])
-                    st.markdown(f"""
-                        <div class="quadrant says">
-                            <div class="q-header"><div class="q-dot"></div>Says (말한다)</div>
-                            <ul>{says_html}</ul>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    does_html = "".join([f"<li>{item}</li>" for item in em_data.get("does", [])])
-                    st.markdown(f"""
-                        <div class="quadrant does">
-                            <div class="q-header"><div class="q-dot"></div>Does (행동한다)</div>
-                            <ul>{does_html}</ul>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                with col2:
-                    thinks_html = "".join([f"<li>{item}</li>" for item in em_data.get("thinks", [])])
-                    st.markdown(f"""
-                        <div class="quadrant thinks">
-                            <div class="q-header"><div class="q-dot"></div>Thinks (생각한다)</div>
-                            <ul>{thinks_html}</ul>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    feels_items = []
-                    for f in em_data.get("feels", []):
-                        f_type = f.get("type", "neu")
-                        f_text = f.get("text", "")
-                        if f_type == "pos":
-                            badge = '<span class="feel-badge feel-pos">긍정</span>'
-                        elif f_type == "neg":
-                            badge = '<span class="feel-badge feel-neg">부정</span>'
-                        else:
-                            badge = '<span class="feel-badge feel-neu">중립</span>'
-                        feels_items.append(f"<li>{badge} {f_text}</li>")
-                    feels_html = "".join(feels_items)
-                    
-                    st.markdown(f"""
-                        <div class="quadrant feels">
-                            <div class="q-header"><div class="q-dot"></div>Feels (느낀다)</div>
-                            <ul>{feels_html}</ul>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                # Copy & Download Buttons
-                st.markdown("---")
-                st.markdown("🤖 **복사 및 다운로드**")
-                
-                # Format raw text for easy copy
-                raw_empathy_text = "=== [공감 맵 분석 결과] ===\n\n"
-                raw_empathy_text += "[SAYS - 말한다]\n" + "\n".join([f"- {i}" for i in em_data.get("says", [])]) + "\n\n"
-                raw_empathy_text += "[THINKS - 생각한다]\n" + "\n".join([f"- {i}" for i in em_data.get("thinks", [])]) + "\n\n"
-                raw_empathy_text += "[DOES - 행동한다]\n" + "\n".join([f"- {i}" for i in em_data.get("does", [])]) + "\n\n"
-                raw_empathy_text += "[FEELS - 느낀다]\n" + "\n".join([f"- [{i.get('type')}] {i.get('text')}" for i in em_data.get("feels", [])])
-                
-                st.code(raw_empathy_text, language='text')
-                st.caption("위 텍스트 박스에서 손쉽게 텍스트로 분석 결과를 복사해 가세요.")
-                
-                st.download_button(
-                    label="📥 JSON 다운로드",
-                    data=json.dumps(em_data, ensure_ascii=False, indent=2),
-                    file_name="empathy_map.json",
-                    mime="application/json"
-                )
-
-    # ------------------ [Step 5: Network Analysis] ------------------
-    with tabs[4]:
-        st.subheader("🕸️ 주관식 키워드 동시출현 네트워크 분석")
-        
-        if not sub_cols:
-            st.warning("주관식 답변 열을 1개 이상 선택해 주세요.")
-        elif client is None:
-            st.warning("네트워크 분석을 실행하려면 사이드바에 **Gemini API Key**를 입력해 주세요.")
-        else:
-            st.info("Gemini AI를 활용해 텍스트에서 주요 핵심 키워드(10~15개)를 명사 위주로 자동 추출한 후, 답변 본문에서 동시에 등장하는 관계를 매핑합니다.")
-            
-            if st.button("네트워크 분석 실행", key="run_network"):
-                with st.spinner("핵심 키워드를 분석하고 동시출현 관계망을 구성하는 중..."):
-                    survey_text = build_survey_text_summary(df, sub_cols)
-                    
-                    # 1. Ask Gemini to extract keywords
-                    prompt = f"""
-                    설문조사 주관식 답변들에서 핵심이 되는 명사 및 구문(키워드)을 10~15개 추출해 주세요.
-                    주로 프로그램 참가자들이 겪은 경험, Pain Point, 요구사항과 관련된 중요한 키워드를 골라야 합니다.
-                    출력 형식은 오직 쉼표로만 구분된 문자열이어야 합니다. 다른 설명이나 특수문자, 마크다운 펜스는 절대 포함하지 마세요.
-
-                    예: 협업, 일정 관리, 소통, 의견 대립, 성취감, 역할 분담, 난이도 조절
-
-                    [주관식 답변 데이터]
-                    {survey_text}
-                    """
-                    
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=prompt
-                        )
-                        keywords_raw = response.text.strip()
-                        keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+                        st.markdown("🤖 **복사 및 다운로드**")
+                        tsv_data = df_freq.to_csv(sep='\t', index=False)
+                        st.code(tsv_data, language='text')
+                        st.caption("텍스트 상자 우측 복사 아이콘으로 스프레드시트에 쉽게 붙여넣으세요.")
                         
-                        # Remove duplicates and clean
-                        keywords = list(dict.fromkeys(keywords))
-                        
-                        # 2. Gather all responses to calculate co-occurrence
-                        all_responses = []
-                        for col in sub_cols:
-                            all_responses.extend([
-                                str(val).strip()
-                                for val in df[col].dropna()
-                                if str(val).strip()
-                            ])
-                            
-                        # Calculate frequencies of keywords
-                        freq_dict = {}
-                        for kw in keywords:
-                            freq_dict[kw] = sum(1 for r in all_responses if kw in r)
-                            
-                        # Build co-occurrence matrix
-                        co_matrix = pd.DataFrame(0, index=keywords, columns=keywords)
-                        for r in all_responses:
-                            present = [kw for kw in keywords if kw in r]
-                            for i in range(len(present)):
-                                for j in range(i + 1, len(present)):
-                                    co_matrix.loc[present[i], present[j]] += 1
-                                    co_matrix.loc[present[j], present[i]] += 1
-                                    
-                        st.session_state.network_keywords = keywords
-                        st.session_state.network_matrix = co_matrix
-                        st.session_state.network_frequencies = freq_dict
-                        st.success("네트워크 분석 관계망 구성 완료!")
-                    except Exception as e:
-                        st.error(f"네트워크 분석 중 오류 발생: {e}")
-                        
-            # Render network plot if exists
-            if "network_matrix" in st.session_state:
-                keywords = st.session_state.network_keywords
-                co_matrix = st.session_state.network_matrix
-                freq_dict = st.session_state.network_frequencies
-                
-                # Check empty graph
-                has_edges = (co_matrix.values.sum() > 0)
-                
-                # Create NetworkX graph
-                G = nx.Graph()
-                for kw in keywords:
-                    G.add_node(kw, size=freq_dict.get(kw, 1))
-                for i in range(len(keywords)):
-                    for j in range(i + 1, len(keywords)):
-                        weight = co_matrix.iloc[i, j]
-                        if weight > 0:
-                            G.add_edge(keywords[i], keywords[j], weight=weight)
-                            
-                # Layout
-                if not has_edges:
-                    pos = {node: np.array([np.cos(2*np.pi*i/len(keywords)), np.sin(2*np.pi*i/len(keywords))]) for i, node in enumerate(keywords)}
-                else:
-                    pos = nx.spring_layout(G, k=0.6, iterations=50, seed=42)
-                    
-                # Draw Interactive Network Graph via Plotly
-                edge_traces = []
-                for edge in G.edges(data=True):
-                    x0, y0 = pos[edge[0]]
-                    x1, y1 = pos[edge[1]]
-                    weight = edge[2].get('weight', 1)
-                    width = min(1 + weight * 0.8, 6.0)
-                    edge_trace = go.Scatter(
-                        x=[x0, x1, None], y=[y0, y1, None],
-                        line=dict(width=width, color='rgba(148, 163, 184, 0.4)'),
-                        hoverinfo='none',
-                        mode='lines'
-                    )
-                    edge_traces.append(edge_trace)
-                    
-                node_x = []
-                node_y = []
-                node_text = []
-                node_size = []
-                node_color = []
-                
-                for node in G.nodes():
-                    x, y = pos[node]
-                    node_x.append(x)
-                    node_y.append(y)
-                    node_text.append(f"<b>{node}</b><br>빈도수: {freq_dict.get(node, 0)}회<br>연결된 키워드 수: {G.degree(node)}")
-                    node_size.append(min(15 + freq_dict.get(node, 1) * 2, 45))
-                    node_color.append(G.degree(node))
-                    
-                node_trace = go.Scatter(
-                    x=node_x, y=node_y,
-                    mode='markers+text',
-                    hoverinfo='text',
-                    text=[node for node in G.nodes()],
-                    textposition="top center",
-                    hovertext=node_text,
-                    textfont=dict(size=12, color='#0f172a', family="Noto Sans KR"),
-                    marker=dict(
-                        showscale=True,
-                        colorscale='Viridis',
-                        reversescale=True,
-                        color=node_color,
-                        size=node_size,
-                        colorbar=dict(
-                            title='연결도 (Degree)',
-                            thickness=15,
-                            x=1.02,
-                            len=0.6
-                        ),
-                        line=dict(width=2, color='white')
-                    )
-                )
-                
-                fig_net = go.Figure(
-                    data=edge_traces + [node_trace],
-                    layout=go.Layout(
-                        showlegend=False,
-                        hovermode='closest',
-                        margin=dict(b=20, l=20, r=20, t=20),
-                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        plot_bgcolor='rgba(248, 250, 252, 0.4)',
-                        paper_bgcolor='white',
-                        height=550
-                    )
-                )
-                
-                col_n_1, col_n_2 = st.columns([2, 1])
-                with col_n_1:
-                    st.markdown("##### 인터랙티브 키워드 네트워크 관계망")
-                    st.plotly_chart(fig_net, use_container_width=True)
-                    st.caption("💡 노드를 클릭해 드래그하거나 휠을 사용해 줌인/아웃이 가능합니다. 키워드에 마우스를 호버하면 상세 정보가 표시됩니다.")
-                
-                with col_n_2:
-                    st.markdown("##### 동시출현 키워드 행렬 (상위 연관 관계)")
-                    st.dataframe(co_matrix, use_container_width=True)
-                    
-                    # Downloads & Copy
-                    st.markdown("🤖 **복사 및 다운로드**")
-                    
-                    # 1. Save interactive graph as HTML
-                    html_buffer = io.StringIO()
-                    fig_net.write_html(html_buffer, include_plotlyjs='cdn')
-                    html_bytes = html_buffer.getvalue().encode('utf-8')
-                    
-                    st.download_button(
-                        label="🌐 인터랙티브 그래프 HTML 다운로드",
-                        data=html_bytes,
-                        file_name="keyword_network.html",
-                        mime="text/html"
-                    )
-                    
-                    # 2. Draw static Matplotlib network for static image download
-                    try:
-                        fig_plt, ax = plt.subplots(figsize=(6, 5))
-                        nx.draw_networkx_nodes(G, pos, ax=ax, node_size=[freq_dict.get(n, 1)*50 + 200 for n in G.nodes()], node_color=node_color, cmap=plt.cm.viridis)
-                        nx.draw_networkx_edges(G, pos, ax=ax, width=[G[u][v]['weight']*0.8 for u,v in G.edges()], edge_color='gray', alpha=0.5)
-                        nx.draw_networkx_labels(G, pos, ax=ax, font_family='Malgun Gothic', font_size=10, font_weight='bold')
-                        ax.axis('off')
-                        plt.tight_layout()
-                        
-                        img_buf = io.BytesIO()
-                        plt.savefig(img_buf, format='png', dpi=150)
-                        img_buf.seek(0)
-                        plt.close()
-                        
+                        csv_data = df_freq.to_csv(index=False).encode('utf-8-sig')
                         st.download_button(
-                            label="🖼️ 네트워크 그래프 PNG 다운로드",
-                            data=img_buf,
-                            file_name="keyword_network.png",
-                            mime="image/png"
+                            label="📥 CSV 다운로드",
+                            data=csv_data,
+                            file_name=f"demographic_{selected_dem_col}.csv",
+                            mime="text/csv"
                         )
-                    except Exception as e:
-                        st.caption(f"PNG 파일 렌더링 지연 발생: {e}")
+                        
+                    with col_d_2:
+                        st.markdown("##### 시각화 차트")
+                        chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"])
+                        
+                        if chart_type == "원형 차트 (Pie Chart)":
+                            fig = px.pie(df_freq, names=selected_dem_col, values='빈도', 
+                                         title=f"{selected_dem_col} 분포 비율",
+                                         color_discrete_sequence=px.colors.qualitative.Safe)
+                        else:
+                            fig = px.bar(df_freq, x=selected_dem_col, y='빈도', 
+                                         title=f"{selected_dem_col} 빈도수",
+                                         color=selected_dem_col,
+                                         color_discrete_sequence=px.colors.qualitative.Safe)
+                        fig.update_layout(font=dict(family="Noto Sans KR"))
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Matplotlib download fallback
+                        try:
+                            plt.figure(figsize=(6, 4))
+                            if chart_type == "원형 차트 (Pie Chart)":
+                                plt.pie(df_freq['빈도'], labels=df_freq[selected_dem_col], autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
+                                plt.title(f"{selected_dem_col} 분포 비율")
+                            else:
+                                plt.bar(df_freq[selected_dem_col], df_freq['빈도'], color='#3b82f6')
+                                plt.ylabel("빈도 (명)")
+                                plt.title(f"{selected_dem_col} 빈도수")
+                                plt.xticks(rotation=45)
+                            plt.tight_layout()
+                            img_buf = io.BytesIO()
+                            plt.savefig(img_buf, format='png', dpi=150)
+                            img_buf.seek(0)
+                            plt.close()
+                            
+                            st.download_button(
+                                label="🖼️ 차트 PNG 이미지 다운로드",
+                                data=img_buf,
+                                file_name=f"chart_{selected_dem_col}.png",
+                                mime="image/png"
+                            )
+                        except Exception as e:
+                            st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
+                            
+        # --- Step 3: Descriptive Analysis ---
+        with tabs_obj[2]:
+            st.subheader("📈 수치형 및 척도 만족도 기술 통계")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 3. 기술 통계 분석 가이드</div>
+                    프로그램 만족도 점수, 혹은 수치로 표기된 설문 응답의 대표값들을 구합니다. 
+                    평균, 표준편차, 중앙값, 최솟값/최댓값을 구하여 흩어짐 정도를 확인하고 여러 문항의 평균값을 막대 그래프로 시각적으로 대비해 봅니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not num_cols:
+                st.info("사이드바에서 분석할 '수치형/5점척도 열'을 1개 이상 선택해 주세요.")
+            else:
+                desc_rows = []
+                for col in num_cols:
+                    numeric = pd.to_numeric(df_obj[col], errors="coerce").dropna()
+                    if not numeric.empty:
+                        desc_rows.append({
+                            '문항': col,
+                            '응답 수': len(numeric),
+                            '평균': round(numeric.mean(), 2),
+                            '표준편차': round(numeric.std(), 2) if len(numeric) > 1 else 0.0,
+                            '중앙값': round(numeric.median(), 2),
+                            '최솟값': round(numeric.min(), 2),
+                            '최댓값': round(numeric.max(), 2)
+                        })
+                
+                if not desc_rows:
+                    st.warning("선택된 열들에서 유효한 수치 데이터를 찾지 못했습니다.")
+                else:
+                    df_desc = pd.DataFrame(desc_rows)
+                    st.dataframe(df_desc, use_container_width=True, hide_index=True)
                     
-                    # 3. Download Matrix
-                    csv_matrix = co_matrix.to_csv(index=True).encode('utf-8-sig')
+                    st.markdown("🤖 **복사 및 다운로드**")
+                    tsv_desc = df_desc.to_csv(sep='\t', index=False)
+                    st.code(tsv_desc, language='text')
+                    st.caption("위 텍스트 박스 우측 아이콘으로 클립보드에 바로 복사해 가세요.")
+                    
+                    csv_desc = df_desc.to_csv(index=False).encode('utf-8-sig')
                     st.download_button(
-                        label="📥 동시출현 매트릭스 CSV 다운로드",
-                        data=csv_matrix,
-                        file_name="co_occurrence_matrix.csv",
+                        label="📥 CSV 다운로드",
+                        data=csv_desc,
+                        file_name="descriptive_statistics.csv",
                         mime="text/csv"
                     )
+                    
+                    st.markdown("##### 주요 평점 평균값 비교")
+                    fig_mean = px.bar(df_desc, x='문항', y='평균', text='평균',
+                                      title="척도 만족도 문항 평균 비교",
+                                      color='평균', color_continuous_scale=px.colors.sequential.Teal)
+                    fig_mean.update_traces(textposition='outside')
+                    fig_mean.update_layout(font=dict(family="Noto Sans KR"))
+                    st.plotly_chart(fig_mean, use_container_width=True)
+                    
+                    # Notify user that data is saved for Stage 2 HMW
+                    st.success("✅ [안내] 이 단계의 만족도 평균값과 인구통계 분포 요약이 자동으로 보존되어 Stage 2의 HMW 분석에 반영됩니다.")
 
-    # ------------------ [Step 6: HMW (How Might We) Analysis] ------------------
-    with tabs[5]:
-        st.subheader("💡 AI 기반 HMW (How Might We) 기회 정의")
-        
-        if not sub_cols:
-            st.warning("주관식 답변 열을 1개 이상 선택해 주세요.")
-        elif client is None:
-            st.warning("HMW 질문 생성을 시작하려면 사이드바에 **Gemini API Key**를 입력해 주세요.")
-        else:
-            st.info("설문조사 응답과 정량 요약 정보에서 도출된 Pain Point를 바탕으로, 아이디에이션의 방아쇠가 될 긍정적이고 창의적인 HMW 질문을 자동 도출합니다.")
+elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
+    # ------------------ [Stage 2 Render] ------------------
+    if "df_sub" not in st.session_state:
+        # Welcome screen for Stage 2
+        st.markdown("""
+            ### 👋 [Stage 2] 주관식 데이터 분석에 오신 것을 환영합니다!
             
-            if st.button("HMW 질문 생성", key="run_hmw"):
-                with st.spinner("Gemini AI가 HMW 질문 가이드라인(7요소)을 적용하여 생성하는 중..."):
-                    survey_text = build_survey_text_summary(df, sub_cols)
-                    quant_summary = build_quantitative_summary(df, sub_cols, dem_cols, obj_cols, num_cols)
-                    
-                    prompt = f"""
-                    설문조사의 정량 통계 요약 및 주관식 답변을 분석하여 사용자의 핵심 Pain Point와 인사이트를 도출하고,
-                    [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 참고하여 창의적이고 해결 가능한 HMW(How Might We) 질문을 5~7개 생성해 주세요.
-
-                    [인구통계 및 기술통계 요약]
-                    {quant_summary}
-
-                    [주관식 답변 데이터]
-                    {survey_text}
-
-                    {HMW_OPPORTUNITY_GUIDE}
-
-                    [출력 형식]
-                    반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 부연 설명은 제외해 주세요.
-                    {{
-                      "hmw_list": [
-                        {{
-                          "opportunity": "긍정적 요소 강화",
-                          "direction": "기존에 좋았던 협업 경험을 극대화하기",
-                          "question": "우리가 어떻게 하면 참가자들이 협업 과정에서 느낀 소속감을 장기적 네트워킹으로 확장할 수 있을까?",
-                          "icon": "💡"
-                        }},
-                        ...
-                      ]
-                    }}
-                    """
-                    
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=prompt,
-                            config={'temperature': 0.2}
-                        )
-                        hmw_dict = parse_json_from_response(response.text)
-                        st.session_state.hmw_data = hmw_dict
-                        st.success("HMW 기회 도출 완료!")
-                    except Exception as e:
-                        st.error(f"HMW 질문 생성 중 오류 발생: {e}")
-                        
-            # Render HMW questions if exists
-            if "hmw_data" in st.session_state:
-                hmw_dict = st.session_state.hmw_data
+            이 단계에서는 설문조사의 **자유 서술형 답변(주관식)**을 분석합니다.
+            Gemini AI 패널을 이용해 사용자의 심리와 Pain Point를 입체적으로 분류하는 **공감 맵(Step 4)**, 
+            텍스트 키워드 동시출현 가중치를 표현하는 **의미 연결망 그래프(Step 5)**, 
+            그리고 아이디에이션을 유도하는 **HMW(How Might We) 질문 도출(Step 6)**을 진행합니다.
+            
+            * **Stage 1의 결과 반영**: 이전 단계에서 객관식 파일을 분석하셨다면, 정량 분석 요약 데이터가 자동으로 연계되어 Step 6의 HMW 질문 도출 시 복합 맥락으로 활용됩니다. (객관식 분석 단계를 건너뛰고 주관식 파일만 단독 분석하는 것도 물론 가능합니다.)
+            
+            #### 💡 시작하는 방법:
+            1. 왼쪽 사이드바에서 **주관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
+               * 테스트가 필요하신 경우 워크스페이스에 생성된 `mock_subjective_data.csv` 파일을 사용하실 수 있습니다.
+            2. 파일 업로드 후, 각 분석 탭을 클릭하고 하단의 분석 실행 버튼을 누르면 AI 연동 분석이 개시됩니다.
+        """)
+    else:
+        df_sub = st.session_state.df_sub
+        
+        # Tabs for Steps 4~6
+        tabs_sub = st.tabs(["Step 4: 공감 맵 분석", "Step 5: 네트워크 분석", "Step 6: HMW 도출"])
+        
+        # --- Step 4: Empathy Map ---
+        with tabs_sub[0]:
+            st.subheader("💡 AI 기반 주관식 응답 공감 맵(Empathy Map)")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 4. 공감 맵 분석 가이드</div>
+                    Gemini AI를 사용해 주관식 의견들에 포함된 고객(사용자)의 감정과 요구사항을 분류하고 요약합니다. 
+                    말한 내용(Says), 내면의 생각(Thinks), 취하는 행동(Does), 복합적인 감정(Feels)의 4개 도메인으로 나뉘어 프리미엄 카드 레이아웃으로 결과를 제공합니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not sub_cols:
+                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
+            elif client is None:
+                st.warning("공감 맵 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
+            else:
+                survey_text = build_survey_text_summary(df_sub, sub_cols)
                 
-                # Card UI display
-                st.markdown("##### 기회 요소 7요소 기반 HMW 카드")
-                for item in hmw_dict.get("hmw_list", []):
-                    icon = item.get("icon", "💡")
-                    opp = item.get("opportunity", "")
-                    direc = item.get("direction", "")
-                    q = item.get("question", "")
+                if st.button("공감 맵 분석 실행", key="run_empathy_map"):
+                    with st.spinner("Gemini AI가 서술형 답변들을 종합하여 다각도로 감정을 맵핑하고 있습니다..."):
+                        prompt = f"""
+                        설문조사의 주관식 답변 데이터를 바탕으로, 대상 사용자의 심리를 분석하여 2x2 공감 맵(Empathy Map)을 작성해주세요.
+                        공감 맵은 다음 4가지 영역으로 구성됩니다:
+                        1. Says (말하는 것): 사용자가 겉으로 표현한 대표적인 의견, 요구사항, 피드백
+                        2. Thinks (생각하는 것): 사용자가 명시적으로 말하지는 않았지만 마음속으로 고민하거나 바라는 생각/기대
+                        3. Does (행동하는 것): 사용자가 직면한 상황에서 취하는 구체적인 행동, 프로세스, 습관
+                        4. Feels (느끼는 것): 사용자가 느끼는 긍정적/부정적/중립적 감정, 불안, 기쁨, 답답함
+
+                        [주관식 답변 데이터]
+                        {survey_text}
+
+                        [출력 형식]
+                        반드시 다음 JSON 형식으로만 응답해주세요. 다른 부연 설명이나 마크다운 코드 펜스는 제외해주세요.
+                        {{
+                          "says": ["의견 1", "의견 2", "의견 3", "의견 4"],
+                          "thinks": ["고민 1", "고민 2", "고민 3", "고민 4"],
+                          "does": ["행동 1", "행동 2", "행동 3", "행동 4"],
+                          "feels": [
+                            {{"text": "감정 1", "type": "pos"}},
+                            {{"text": "감정 2", "type": "neg"}},
+                            {{"text": "감정 3", "type": "neu"}},
+                            {{"text": "감정 4", "type": "neg"}}
+                          ]
+                        }}
+                        (참고: feels의 type은 'pos'(긍정), 'neg'(부정), 'neu'(중립) 중 하나로 지정해주세요. 각 영역별로 최소 4개씩 도출해주세요.)
+                        """
+                        
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt,
+                                config={'temperature': 0.1}
+                            )
+                            empathy_dict = parse_json_from_response(response.text)
+                            st.session_state.empathy_data = empathy_dict
+                            st.success("공감 맵 분석이 완료되었습니다!")
+                        except Exception as e:
+                            st.error(f"공감 맵 생성 실패: {e}")
+                            
+                # Show Empathy Map if exists in state
+                if "empathy_data" in st.session_state:
+                    em_data = st.session_state.empathy_data
                     
-                    st.markdown(f"""
-                        <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                            <div style="display: flex; align-items: center; gap: 12px;">
-                                <span style="font-size: 24px;">{icon}</span>
-                                <div>
-                                    <span style="font-size: 12px; color: #64748b; font-weight: bold; text-transform: uppercase;">{opp} · {direc}</span>
-                                    <p style="font-size: 15px; font-weight: 700; color: #065f46; margin: 4px 0 0 0; line-height: 1.6;">{q}</p>
+                    # 2x2 UI Render
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        says_html = "".join([f"<li>{item}</li>" for item in em_data.get("says", [])])
+                        st.markdown(f"""
+                            <div class="quadrant says">
+                                <div class="q-header"><div class="q-dot"></div>Says (말한다)</div>
+                                <ul>{says_html}</ul>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                        does_html = "".join([f"<li>{item}</li>" for item in em_data.get("does", [])])
+                        st.markdown(f"""
+                            <div class="quadrant does">
+                                <div class="q-header"><div class="q-dot"></div>Does (행동한다)</div>
+                                <ul>{does_html}</ul>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                    with col2:
+                        thinks_html = "".join([f"<li>{item}</li>" for item in em_data.get("thinks", [])])
+                        st.markdown(f"""
+                            <div class="quadrant thinks">
+                                <div class="q-header"><div class="q-dot"></div>Thinks (생각한다)</div>
+                                <ul>{thinks_html}</ul>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                        feels_items = []
+                        for f in em_data.get("feels", []):
+                            f_type = f.get("type", "neu")
+                            f_text = f.get("text", "")
+                            if f_type == "pos":
+                                badge = '<span class="feel-badge feel-pos">긍정</span>'
+                            elif f_type == "neg":
+                                badge = '<span class="feel-badge feel-neg">부정</span>'
+                            else:
+                                badge = '<span class="feel-badge feel-neu">중립</span>'
+                            feels_items.append(f"<li>{badge} {f_text}</li>")
+                        feels_html = "".join(feels_items)
+                        
+                        st.markdown(f"""
+                            <div class="quadrant feels">
+                                <div class="q-header"><div class="q-dot"></div>Feels (느낀다)</div>
+                                <ul>{feels_html}</ul>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                    # Copy and download
+                    st.markdown("---")
+                    st.markdown("🤖 **복사 및 다운로드**")
+                    
+                    raw_empathy_text = "=== [공감 맵 분석 결과] ===\n\n"
+                    raw_empathy_text += "[SAYS - 말한다]\n" + "\n".join([f"- {i}" for i in em_data.get("says", [])]) + "\n\n"
+                    raw_empathy_text += "[THINKS - 생각한다]\n" + "\n".join([f"- {i}" for i in em_data.get("thinks", [])]) + "\n\n"
+                    raw_empathy_text += "[DOES - 행동한다]\n" + "\n".join([f"- {i}" for i in em_data.get("does", [])]) + "\n\n"
+                    raw_empathy_text += "[FEELS - 느낀다]\n" + "\n".join([f"- [{i.get('type')}] {i.get('text')}" for i in em_data.get("feels", [])])
+                    
+                    st.code(raw_empathy_text, language='text')
+                    
+                    st.download_button(
+                        label="📥 공감맵 데이터 JSON 다운로드",
+                        data=json.dumps(em_data, ensure_ascii=False, indent=2),
+                        file_name="empathy_map.json",
+                        mime="application/json"
+                    )
+                    
+        # --- Step 5: Network Analysis ---
+        with tabs_sub[1]:
+            st.subheader("🕸️ 키워드 의미망 동시출현 네트워크 분석")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 5. 네트워크 분석 가이드</div>
+                    사용자들의 피드백 문장에서 핵심 단어를 끄집어낸 후, 이 단어들이 서로 어떤 연결고리를 맺고 있는지 시각화합니다.
+                    마우스로 노드를 움직이거나 휠로 확대/축소하며 연관 깊이를 분석할 수 있으며, 키워드 연관성 가중치 테이블과 차트를 각각 저장할 수 있습니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not sub_cols:
+                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
+            elif client is None:
+                st.warning("네트워크 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
+            else:
+                if st.button("네트워크 분석 실행", key="run_network"):
+                    with st.spinner("텍스트에서 키워드를 파싱하고 빈도 및 가중치를 매핑하고 있습니다..."):
+                        survey_text = build_survey_text_summary(df_sub, sub_cols)
+                        
+                        prompt = f"""
+                        설문조사 주관식 답변들에서 핵심이 되는 명사 및 구문(키워드)을 10~15개 추출해 주세요.
+                        주로 프로그램 참가자들이 겪은 경험, Pain Point, 요구사항과 관련된 중요한 키워드를 골라야 합니다.
+                        출력 형식은 오직 쉼표로만 구분된 문자열이어야 합니다. 다른 설명이나 특수문자, 마크다운 펜스는 절대 포함하지 마세요.
+
+                        예: 협업, 일정 관리, 소통, 의견 대립, 성취감, 역할 분담, 난이도 조절
+
+                        [주관식 답변 데이터]
+                        {survey_text}
+                        """
+                        
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt
+                            )
+                            keywords_raw = response.text.strip()
+                            keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+                            keywords = list(dict.fromkeys(keywords))
+                            
+                            all_responses = []
+                            for col in sub_cols:
+                                all_responses.extend([
+                                    str(val).strip()
+                                    for val in df_sub[col].dropna()
+                                    if str(val).strip()
+                                ])
+                                
+                            freq_dict = {}
+                            for kw in keywords:
+                                freq_dict[kw] = sum(1 for r in all_responses if kw in r)
+                                
+                            co_matrix = pd.DataFrame(0, index=keywords, columns=keywords)
+                            for r in all_responses:
+                                present = [kw for kw in keywords if kw in r]
+                                for i in range(len(present)):
+                                    for j in range(i + 1, len(present)):
+                                        co_matrix.loc[present[i], present[j]] += 1
+                                        co_matrix.loc[present[j], present[i]] += 1
+                                        
+                            st.session_state.network_keywords = keywords
+                            st.session_state.network_matrix = co_matrix
+                            st.session_state.network_frequencies = freq_dict
+                            st.success("네트워크 구조화 완성!")
+                        except Exception as e:
+                            st.error(f"네트워크 분석 연산 중 에러: {e}")
+                            
+                # Draw network if exists
+                if "network_matrix" in st.session_state:
+                    keywords = st.session_state.network_keywords
+                    co_matrix = st.session_state.network_matrix
+                    freq_dict = st.session_state.network_frequencies
+                    
+                    has_edges = (co_matrix.values.sum() > 0)
+                    G = nx.Graph()
+                    for kw in keywords:
+                        G.add_node(kw, size=freq_dict.get(kw, 1))
+                    for i in range(len(keywords)):
+                        for j in range(i + 1, len(keywords)):
+                            w = co_matrix.iloc[i, j]
+                            if w > 0:
+                                G.add_edge(keywords[i], keywords[j], weight=w)
+                                
+                    if not has_edges:
+                        pos = {node: np.array([np.cos(2*np.pi*i/len(keywords)), np.sin(2*np.pi*i/len(keywords))]) for i, node in enumerate(keywords)}
+                    else:
+                        pos = nx.spring_layout(G, k=0.6, iterations=50, seed=42)
+                        
+                    # Plotly traces
+                    edge_traces = []
+                    for edge in G.edges(data=True):
+                        x0, y0 = pos[edge[0]]
+                        x1, y1 = pos[edge[1]]
+                        w = edge[2].get('weight', 1)
+                        width = min(1 + w * 0.8, 6.0)
+                        edge_trace = go.Scatter(
+                            x=[x0, x1, None], y=[y0, y1, None],
+                            line=dict(width=width, color='rgba(148, 163, 184, 0.4)'),
+                            hoverinfo='none',
+                            mode='lines'
+                        )
+                        edge_traces.append(edge_trace)
+                        
+                    node_x = []
+                    node_y = []
+                    node_text = []
+                    node_size = []
+                    node_color = []
+                    
+                    for node in G.nodes():
+                        x, y = pos[node]
+                        node_x.append(x)
+                        node_y.append(y)
+                        node_text.append(f"<b>{node}</b><br>출현빈도: {freq_dict.get(node, 0)}회<br>연결도: {G.degree(node)}")
+                        node_size.append(min(15 + freq_dict.get(node, 1) * 2, 45))
+                        node_color.append(G.degree(node))
+                        
+                    node_trace = go.Scatter(
+                        x=node_x, y=node_y,
+                        mode='markers+text',
+                        hoverinfo='text',
+                        text=[node for node in G.nodes()],
+                        textposition="top center",
+                        hovertext=node_text,
+                        textfont=dict(size=12, color='#0f172a', family="Noto Sans KR"),
+                        marker=dict(
+                            showscale=True,
+                            colorscale='Viridis',
+                            reversescale=True,
+                            color=node_color,
+                            size=node_size,
+                            colorbar=dict(
+                                title='연결 강도 (Degree)',
+                                thickness=15,
+                                x=1.02,
+                                len=0.6
+                            ),
+                            line=dict(width=2, color='white')
+                        )
+                    )
+                    
+                    fig_net = go.Figure(
+                        data=edge_traces + [node_trace],
+                        layout=go.Layout(
+                            showlegend=False,
+                            hovermode='closest',
+                            margin=dict(b=20, l=20, r=20, t=20),
+                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                            plot_bgcolor='rgba(248, 250, 252, 0.4)',
+                            paper_bgcolor='white',
+                            height=550
+                        )
+                    )
+                    
+                    col_n_1, col_n_2 = st.columns([2, 1])
+                    with col_n_1:
+                        st.markdown("##### 의미망 네트워크 연관 관계 지도")
+                        st.plotly_chart(fig_net, use_container_width=True)
+                        st.caption("💡 노드를 클릭하고 잡아당기거나, 마우스 휠로 확대 및 스크롤할 수 있습니다.")
+                        
+                    with col_n_2:
+                        st.markdown("##### 키워드 동시출현 원형 빈도수 매트릭스")
+                        st.dataframe(co_matrix, use_container_width=True)
+                        
+                        st.markdown("🤖 **복사 및 다운로드**")
+                        
+                        # 1. Interactive HTML download
+                        html_buffer = io.StringIO()
+                        fig_net.write_html(html_buffer, include_plotlyjs='cdn')
+                        html_bytes = html_buffer.getvalue().encode('utf-8')
+                        
+                        st.download_button(
+                            label="🌐 인터랙티브 그래프 HTML 다운로드",
+                            data=html_bytes,
+                            file_name="keyword_network.html",
+                            mime="text/html"
+                        )
+                        
+                        # 2. Static PNG download
+                        try:
+                            fig_plt, ax = plt.subplots(figsize=(6, 5))
+                            nx.draw_networkx_nodes(G, pos, ax=ax, node_size=[freq_dict.get(n, 1)*50 + 200 for n in G.nodes()], node_color=node_color, cmap=plt.cm.viridis)
+                            nx.draw_networkx_edges(G, pos, ax=ax, width=[G[u][v]['weight']*0.8 for u,v in G.edges()], edge_color='gray', alpha=0.5)
+                            nx.draw_networkx_labels(G, pos, ax=ax, font_family='Malgun Gothic', font_size=10, font_weight='bold')
+                            ax.axis('off')
+                            plt.tight_layout()
+                            
+                            img_buf = io.BytesIO()
+                            plt.savefig(img_buf, format='png', dpi=150)
+                            img_buf.seek(0)
+                            plt.close()
+                            
+                            st.download_button(
+                                label="🖼️ 네트워크 그래프 PNG 다운로드",
+                                data=img_buf,
+                                file_name="keyword_network.png",
+                                mime="image/png"
+                            )
+                        except Exception as e:
+                            st.caption(f"PNG 이미지 생성 대기 지연: {e}")
+                            
+                        # 3. CSV matrix download
+                        csv_matrix = co_matrix.to_csv(index=True).encode('utf-8-sig')
+                        st.download_button(
+                            label="📥 매트릭스 데이터 CSV 다운로드",
+                            data=csv_matrix,
+                            file_name="co_occurrence_matrix.csv",
+                            mime="text/csv"
+                        )
+                        
+        # --- Step 6: HMW 도출 ---
+        with tabs_sub[2]:
+            st.subheader("💡 AI 기반 HMW (How Might We) 기회 및 질문 도출")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 6. HMW 도출 가이드</div>
+                    불편 요소나 기회 요소로부터 '우리가 어떻게 하면(How Might We)...?' 형태로 발상 전환용 질문을 뽑아내는 창의적 문제 재정의 기법입니다.
+                    만약 Stage 1에서 인구통계 및 만족도 척도 요약을 집계하셨다면, 정량적 만족 지표를 기반으로 한층 정합성 있는 입체적 컨텍스트가 Gemini AI에 전달됩니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Show cross-talk status
+            quant_summary_status = st.session_state.get("quant_summary", "")
+            if quant_summary_status:
+                st.success("📊 **Stage 1 정량 분석 결과 연계 완료**: 이전 단계에서 생성한 정량 기술 통계 및 만족도 지표를 HMW 프롬프트에 자동으로 결합하여 분석합니다.")
+                with st.expander("연동된 정량 분석 요약 데이터 보기"):
+                    st.text(quant_summary_status)
+            else:
+                st.info("ℹ️ **안내**: 이전 Stage 1(정량 분석) 단계가 수행되지 않았습니다. 현재 주관식 서술형 피드백 데이터만을 바탕으로 HMW 도출을 처리합니다.")
+                quant_summary_status = "정량 정보가 생략되었습니다 (주관식 단독 분석)."
+                
+            if not sub_cols:
+                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
+            elif client is None:
+                st.warning("HMW 질문 생성을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
+            else:
+                if st.button("HMW 질문 생성", key="run_hmw"):
+                    with st.spinner("Gemini AI가 정량 정보와 주관식 Pain Point를 조합하여 기회 7요소를 매핑하는 중..."):
+                        survey_text = build_survey_text_summary(df_sub, sub_cols)
+                        
+                        prompt = f"""
+                        설문조사의 정량 통계 요약 및 주관식 답변을 분석하여 사용자의 핵심 Pain Point와 인사이트를 도출하고,
+                        [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 참고하여 창의적이고 해결 가능한 HMW(How Might We) 질문을 5~7개 생성해 주세요.
+
+                        [Stage 1 정량/인구통계 분석 요약]
+                        {quant_summary_status}
+
+                        [Stage 2 주관식 답변 데이터]
+                        {survey_text}
+
+                        {HMW_OPPORTUNITY_GUIDE}
+
+                        [출력 형식]
+                        반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 부연 설명은 제외해 주세요.
+                        {{
+                          "hmw_list": [
+                            {{
+                              "opportunity": "긍정적 요소 강화",
+                              "direction": "기존에 좋았던 협업 경험을 극대화하기",
+                              "question": "우리가 어떻게 하면 참가자들이 협업 과정에서 느낀 소속감을 장기적 네트워킹으로 확장할 수 있을까?",
+                              "icon": "💡"
+                            }},
+                            ...
+                          ]
+                        }}
+                        """
+                        
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt,
+                                config={'temperature': 0.2}
+                            )
+                            hmw_dict = parse_json_from_response(response.text)
+                            st.session_state.hmw_data = hmw_dict
+                            st.success("HMW 분석 및 카드 배치 완료!")
+                        except Exception as e:
+                            st.error(f"HMW 질문 도출 중 에러: {e}")
+                            
+                # Render HMW questions if exists
+                if "hmw_data" in st.session_state:
+                    hmw_dict = st.session_state.hmw_data
+                    
+                    st.markdown("##### 기회 정의 7요소 기반 HMW 질문 카드")
+                    for item in hmw_dict.get("hmw_list", []):
+                        icon = item.get("icon", "💡")
+                        opp = item.get("opportunity", "")
+                        direc = item.get("direction", "")
+                        q = item.get("question", "")
+                        
+                        st.markdown(f"""
+                            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <span style="font-size: 24px;">{icon}</span>
+                                    <div>
+                                        <span style="font-size: 12px; color: #64748b; font-weight: bold; text-transform: uppercase;">{opp} · {direc}</span>
+                                        <p style="font-size: 15px; font-weight: 700; color: #065f46; margin: 4px 0 0 0; line-height: 1.6;">{q}</p>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
+                        
+                    st.markdown("---")
+                    st.markdown("🤖 **복사 및 다운로드**")
                     
-                # Copy & Download Options
-                st.markdown("---")
-                st.markdown("🤖 **복사 및 다운로드**")
-                
-                # Format raw text for easy copy
-                raw_hmw_text = "=== [HMW 질문 리스트] ===\n\n"
-                for idx, item in enumerate(hmw_dict.get("hmw_list", [])):
-                    raw_hmw_text += f"{idx+1}. [{item.get('opportunity')}] {item.get('direction')}\n"
-                    raw_hmw_text += f"   Q: {item.get('question')}\n\n"
+                    raw_hmw_text = "=== [HMW 질문 리스트] ===\n\n"
+                    for idx, item in enumerate(hmw_dict.get("hmw_list", [])):
+                        raw_hmw_text += f"{idx+1}. [{item.get('opportunity')}] {item.get('direction')}\n"
+                        raw_hmw_text += f"   Q: {item.get('question')}\n\n"
+                        
+                    st.code(raw_hmw_text, language='text')
                     
-                st.code(raw_hmw_text, language='text')
-                st.caption("위 텍스트 박스 우측 복사 아이콘으로 간편히 클립보드에 복사하세요.")
-                
-                st.download_button(
-                    label="📥 HMW 질문 TXT 다운로드",
-                    data=raw_hmw_text,
-                    file_name="how_might_we_questions.txt",
-                    mime="text/plain"
-                )
-else:
-    # Landing message if no file uploaded
-    st.info("👈 왼쪽 사이드바에서 분석할 설문조사 데이터(CSV/Excel) 파일을 업로드해 주세요.")
-    
-    # Beautiful mockup description of features
-    st.markdown("""
-        <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 15px;">
-            <h4 style="margin-top:0; color:#1e293b;">🚀 주요 제공 기능 및 분석 가이드</h4>
-            <ul style="font-size: 13.5px; line-height: 1.8; color: #475569; padding-left: 20px; margin-bottom: 0;">
-                <li><strong>Step 1: 데이터 업로드 및 전처리</strong> - 빈 데이터(NaN), 중복값, 공백 제거 기능 제공</li>
-                <li><strong>Step 2: 인구통계 분석</strong> - 성별, 연령, 전공 등 빈도분석 테이블 및 반응형 원형/막대 차트 시각화</li>
-                <li><strong>Step 3: 기술 통계 분석</strong> - 만족도와 같은 5점 척도/수치형 데이터 평균, 중앙값, 분산 경향성 도출</li>
-                <li><strong>Step 4: 공감 맵 분석</strong> - 주관식 답변에서 Says, Thinks, Does, Feels를 도출하는 고급 AI 세션</li>
-                <li><strong>Step 5: 네트워크 분석</strong> - 주관식 답변 핵심 키워드 간의 연관 관계를 보여주는 동시출현 의미 관계망 시각화</li>
-                <li><strong>Step 6: HMW 도출</strong> - 문제 정의 가이드와 Pain Point에 기반해 아이디어를 확장하는 7요소 기반 HMW 질문 카드 자동생성</li>
-            </ul>
-        </div>
-    """, unsafe_allow_html=True)
+                    st.download_button(
+                        label="📥 HMW 질문 목록 TXT 다운로드",
+                        data=raw_hmw_text,
+                        file_name="how_might_we_questions.txt",
+                        mime="text/plain"
+                    )
