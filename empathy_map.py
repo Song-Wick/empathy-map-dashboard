@@ -414,6 +414,16 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
         st.sidebar.markdown("---")
         st.sidebar.markdown("### 📊 정량 컬럼 분석 구성")
         
+        with st.sidebar.expander("❓ 각 설정 항목의 차이점 안내"):
+            st.markdown("""
+                * **객관식/선택형 열**: 
+                  텍스트 응답의 **선택 비율(%)과 빈도**를 집계하는 데 사용됩니다 (Step 2 분석).
+                * **수치형/5점척도 열**: 
+                  숫자 응답의 **평균값, 표준편차**를 산출하는 데 사용됩니다 (Step 3 분석).
+                
+                💡 *동일한 5점 척도 만족도 문항이라도 평균값과 상세 선택 비율을 모두 보고 싶다면 두 상자에 모두 선택해 두셔도 좋습니다!*
+            """)
+            
         # Categorical and Numeric column inferences
         st.sidebar.markdown("##### 🔍 컬럼 감지 설정")
         custom_demo_input = st.sidebar.text_input(
