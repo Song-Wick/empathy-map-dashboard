@@ -1,4 +1,6 @@
-streamlit
 pandas
+plotly
+networkx
+matplotlib
 google-genai
 openpyxl
