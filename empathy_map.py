@@ -535,14 +535,13 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
             
             #### 💡 시작하는 방법:
             1. ① 왼쪽 사이드바에서 **객관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
-               * 테스트가 필요하신 경우 워크스페이스에 생성된 `mock_objective_data.csv` 파일을 사용하실 수 있습니다.
-            2. ② 파일 업로드 후, 데이터 결측치를 정제(Step 1)하고, 인구통계 분석(Step 2)과 만족도 기술 통계(Step 3) 탭을 통해 분석을 진행해 보세요.
+            2. ② 파일 업로드 후, 데이터 결측치를 정제하고 인구통계 분석, 기술 통계 분석, 문항별 빈도분석, 교차분석 탭을 통해 다각도로 분석을 진행해 보세요.
         """)
     else:
         df_obj = st.session_state.df_obj
         
-        # Tabs for Steps 1~4
-        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 문항별 빈도분석", "Step 4: 기술 통계 분석"])
+        # Tabs for Steps 1~5
+        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 기술 통계 분석", "Step 4: 문항별 빈도분석", "Step 5: 교차분석"])
         
         # --- Step 1: Preprocessing ---
         with tabs_obj[0]:
@@ -677,8 +676,67 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         except Exception as e:
                             st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
                             
-        # --- Step 3: Item Frequency & Sub-factor Analysis ---
+        # --- Step 3: Descriptive Analysis ---
         with tabs_obj[2]:
+            st.subheader("📈 수치형 및 척도 만족도 기술 통계")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 3. 기술 통계 분석 가이드</div>
+                    프로그램 만족도 점수, 혹은 수치로 표기된 설문 응답의 대표값들을 구합니다. 
+                    평균, 표준편차, 중앙값, 최솟값/최댓값을 구하여 흩어짐 정도를 확인하고 여러 문항의 평균값을 막대 그래프로 시각적으로 대비해 봅니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not num_cols:
+                st.info("사이드바에서 분석할 '수치형/5점척도 열'을 1개 이상 선택해 주세요.")
+            else:
+                desc_rows = []
+                for col in num_cols:
+                    numeric = pd.to_numeric(df_obj[col], errors="coerce").dropna()
+                    if not numeric.empty:
+                        desc_rows.append({
+                            '문항': col,
+                            '응답 수': len(numeric),
+                            '평균': round(numeric.mean(), 2),
+                            '표준편차': round(numeric.std(), 2) if len(numeric) > 1 else 0.0,
+                            '중앙값': round(numeric.median(), 2),
+                            '최솟값': round(numeric.min(), 2),
+                            '최댓값': round(numeric.max(), 2)
+                        })
+                
+                if not desc_rows:
+                    st.warning("선택된 열들에서 유효한 수치 데이터를 찾지 못했습니다.")
+                else:
+                    df_desc = pd.DataFrame(desc_rows)
+                    st.dataframe(df_desc, use_container_width=True, hide_index=True)
+                    
+                    st.markdown("🤖 **복사 및 다운로드**")
+                    tsv_desc = df_desc.to_csv(sep='\t', index=False)
+                    st.code(tsv_desc, language='text')
+                    st.caption("위 텍스트 박스 우측 아이콘으로 클립보드에 바로 복사해 가세요.")
+                    
+                    csv_desc = df_desc.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 CSV 다운로드",
+                        data=csv_desc,
+                        file_name="descriptive_statistics.csv",
+                        mime="text/csv"
+                    )
+                    
+                    st.markdown("##### 주요 평점 평균값 비교")
+                    fig_mean = px.bar(df_desc, x='문항', y='평균', text='평균',
+                                      title="척도 만족도 문항 평균 비교",
+                                      color='평균', color_continuous_scale=px.colors.sequential.Teal)
+                    fig_mean.update_traces(textposition='outside')
+                    fig_mean.update_layout(font=dict(family="Noto Sans KR"))
+                    st.plotly_chart(fig_mean, use_container_width=True)
+                    
+                    # Notify user that data is saved for Stage 2 HMW
+                    st.success("✅ [안내] 이 단계의 만족도 평균값과 인구통계 분포 요약이 자동으로 보존되어 Stage 2의 HMW 분석에 반영됩니다.")
+
+        # --- Step 4: Item Frequency & Sub-factor Analysis ---
+        with tabs_obj[3]:
             st.subheader("📊 문항별 빈도 및 하위 요인 분석")
             
             step3_sub_mode = st.radio(
@@ -870,65 +928,143 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                                     fig_gf_pie.update_layout(font=dict(family="Noto Sans KR"))
                                     st.plotly_chart(fig_gf_pie, use_container_width=True)
 
-
-        # --- Step 4: Descriptive Analysis ---
-        with tabs_obj[3]:
-            st.subheader("📈 수치형 및 척도 만족도 기술 통계")
+        # --- Step 5: Cross-tabulation Analysis ---
+        with tabs_obj[4]:
+            st.subheader("🔀 인구통계 기준 교차분석 (Crosstab)")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 4. 기술 통계 분석 가이드</div>
-                    프로그램 만족도 점수, 혹은 수치로 표기된 설문 응답의 대표값들을 구합니다. 
-                    평균, 표준편차, 중앙값, 최솟값/최댓값을 구하여 흩어짐 정도를 확인하고 여러 문항의 평균값을 막대 그래프로 시각적으로 대비해 봅니다.
+                    <div class="guide-title">💡 Step 5. 교차분석 가이드</div>
+                    성별, 연령대, 직무 등의 <b>인구통계 변수(기준 행)</b>와 <b>객관식/선택형 문항(대상 열)</b>을 교차시켜 집단별 응답 분포의 차이를 확인하는 단계입니다. 
+                    특정 인구통계적 집단에 따른 상세 응답 빈도와 백분율(%) 교차표를 제공하며, 누적 백분율 막대그래프를 통해 시각적으로 대비할 수 있습니다.
                 </div>
             """, unsafe_allow_html=True)
             
-            if not num_cols:
-                st.info("사이드바에서 분석할 '수치형/5점척도 열'을 1개 이상 선택해 주세요.")
+            if not dem_cols:
+                st.info("사이드바에서 분석의 기준이 될 '인구통계학 열'을 1개 이상 선택해 주세요.")
+            elif not obj_cols and not num_cols:
+                st.info("사이드바에서 교차 분석을 수행할 '객관식/선택형 열' 또는 '수치형/5점척도 열'을 1개 이상 선택해 주세요.")
             else:
-                desc_rows = []
-                for col in num_cols:
-                    numeric = pd.to_numeric(df_obj[col], errors="coerce").dropna()
-                    if not numeric.empty:
-                        desc_rows.append({
-                            '문항': col,
-                            '응답 수': len(numeric),
-                            '평균': round(numeric.mean(), 2),
-                            '표준편차': round(numeric.std(), 2) if len(numeric) > 1 else 0.0,
-                            '중앙값': round(numeric.median(), 2),
-                            '최솟값': round(numeric.min(), 2),
-                            '최댓값': round(numeric.max(), 2)
-                        })
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    row_var = st.selectbox("기준 인구통계 변수 선택 (행)", dem_cols)
+                with col_c2:
+                    col_var = st.selectbox("교차 대상 문항 선택 (열)", list(dict.fromkeys(list(obj_cols) + list(num_cols))))
                 
-                if not desc_rows:
-                    st.warning("선택된 열들에서 유효한 수치 데이터를 찾지 못했습니다.")
+                # Check data
+                series_row = df_obj[row_var].dropna().astype(str).str.strip()
+                series_col = df_obj[col_var].dropna().astype(str).str.strip()
+                
+                if series_row.empty or series_col.empty:
+                    st.warning("선택한 컬럼에 분석 가능한 데이터가 없습니다.")
                 else:
-                    df_desc = pd.DataFrame(desc_rows)
-                    st.dataframe(df_desc, use_container_width=True, hide_index=True)
+                    # Clean aligned data
+                    df_crosstab_raw = df_obj[[row_var, col_var]].dropna().copy()
+                    for col in df_crosstab_raw.columns:
+                        df_crosstab_raw[col] = df_crosstab_raw[col].astype(str).str.strip()
+                    df_crosstab_raw = df_crosstab_raw[df_crosstab_raw[row_var] != ""]
+                    df_crosstab_raw = df_crosstab_raw[df_crosstab_raw[col_var] != ""]
                     
-                    st.markdown("🤖 **복사 및 다운로드**")
-                    tsv_desc = df_desc.to_csv(sep='\t', index=False)
-                    st.code(tsv_desc, language='text')
-                    st.caption("위 텍스트 박스 우측 아이콘으로 클립보드에 바로 복사해 가세요.")
-                    
-                    csv_desc = df_desc.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(
-                        label="📥 CSV 다운로드",
-                        data=csv_desc,
-                        file_name="descriptive_statistics.csv",
-                        mime="text/csv"
-                    )
-                    
-                    st.markdown("##### 주요 평점 평균값 비교")
-                    fig_mean = px.bar(df_desc, x='문항', y='평균', text='평균',
-                                      title="척도 만족도 문항 평균 비교",
-                                      color='평균', color_continuous_scale=px.colors.sequential.Teal)
-                    fig_mean.update_traces(textposition='outside')
-                    fig_mean.update_layout(font=dict(family="Noto Sans KR"))
-                    st.plotly_chart(fig_mean, use_container_width=True)
-                    
-                    # Notify user that data is saved for Stage 2 HMW
-                    st.success("✅ [안내] 이 단계의 만족도 평균값과 인구통계 분포 요약이 자동으로 보존되어 Stage 2의 HMW 분석에 반영됩니다.")
+                    if df_crosstab_raw.empty:
+                        st.warning("두 열에 동시에 존재하는 데이터가 없습니다.")
+                    else:
+                        # 1. Frequency count crosstab
+                        df_cross_count = pd.crosstab(df_crosstab_raw[row_var], df_crosstab_raw[col_var])
+                        
+                        # 2. Percentage crosstab (row percentage)
+                        df_cross_pct = pd.crosstab(df_crosstab_raw[row_var], df_crosstab_raw[col_var], normalize='index') * 100
+                        df_cross_pct = df_cross_pct.round(1)
+                        
+                        col_tbl1, col_tbl2 = st.columns([1, 1])
+                        with col_tbl1:
+                            st.markdown(f"##### 🔠 {row_var} × {col_var} 교차 빈도표 (명)")
+                            st.dataframe(df_cross_count, use_container_width=True)
+                            
+                            tsv_cross_count = df_cross_count.to_csv(sep='\t', index=True)
+                            st.code(tsv_cross_count, language='text')
+                            
+                        with col_tbl2:
+                            st.markdown(f"##### 📊 {row_var} × {col_var} 집단 내 응답 비율표 (%)")
+                            st.dataframe(df_cross_pct, use_container_width=True)
+                            
+                            tsv_cross_pct = df_cross_pct.to_csv(sep='\t', index=True)
+                            st.code(tsv_cross_pct, language='text')
+                            
+                        # Download buttons for Crosstabs
+                        st.markdown("🤖 **교차표 다운로드**")
+                        col_dl1, col_dl2 = st.columns(2)
+                        with col_dl1:
+                            csv_cross_count = df_cross_count.to_csv(index=True).encode('utf-8-sig')
+                            st.download_button(
+                                label="📥 교차 빈도표 CSV 다운로드",
+                                data=csv_cross_count,
+                                file_name=f"crosstab_count_{row_var}_{col_var}.csv",
+                                mime="text/csv",
+                                key="dl_cross_count"
+                            )
+                        with col_dl2:
+                            csv_cross_pct = df_cross_pct.to_csv(index=True).encode('utf-8-sig')
+                            st.download_button(
+                                label="📥 교차 비율표 CSV 다운로드",
+                                data=csv_cross_pct,
+                                file_name=f"crosstab_pct_{row_var}_{col_var}.csv",
+                                mime="text/csv",
+                                key="dl_cross_pct"
+                            )
+                            
+                        # Stacked bar chart for crosstab
+                        st.markdown("##### 📈 집단별 누적 백분율 분포 시각화")
+                        df_melted = df_cross_pct.reset_index().melt(id_vars=row_var, value_name="비율(%)", var_name=col_var)
+                        
+                        fig_cross = px.bar(
+                            df_melted,
+                            x=row_var,
+                            y="비율(%)",
+                            color=col_var,
+                            text="비율(%)",
+                            title=f"{row_var} 집단별 {col_var} 응답 비율 분포",
+                            labels={"비율(%)": "비율 (%)"},
+                            category_orders={row_var: sorted(df_melted[row_var].unique())},
+                            color_discrete_sequence=px.colors.qualitative.Safe
+                        )
+                        fig_cross.update_layout(
+                            barmode="stack",
+                            font=dict(family="Noto Sans KR"),
+                            yaxis_range=[0, 100]
+                        )
+                        fig_cross.update_traces(textposition='inside', texttemplate='%{text:.1f}%')
+                        st.plotly_chart(fig_cross, use_container_width=True)
+                        
+                        try:
+                            plt.figure(figsize=(7, 5))
+                            categories = df_cross_pct.index
+                            columns_data = df_cross_pct.columns
+                            
+                            bottom = np.zeros(len(categories))
+                            colors = plt.cm.Paired.colors
+                            for i, col_data_name in enumerate(columns_data):
+                                plt.bar(categories, df_cross_pct[col_data_name], bottom=bottom, label=str(col_data_name), color=colors[i % len(colors)])
+                                bottom += df_cross_pct[col_data_name]
+                                
+                            plt.ylabel("비율 (%)")
+                            plt.title(f"{row_var} 집단별 {col_var} 응답 비율 분포")
+                            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                            plt.tight_layout()
+                            
+                            img_buf = io.BytesIO()
+                            plt.savefig(img_buf, format='png', dpi=150)
+                            img_buf.seek(0)
+                            plt.close()
+                            
+                            st.download_button(
+                                label="🖼️ 교차 분석 차트 PNG 다운로드",
+                                data=img_buf,
+                                file_name=f"crosstab_chart_{row_var}_{col_var}.png",
+                                mime="image/png",
+                                key="dl_cross_chart_png"
+                            )
+                        except Exception as e:
+                            st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
 
 elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
     # ------------------ [Stage 2 Render] ------------------
@@ -938,30 +1074,27 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
             ### 👋 [Stage 2] 주관식 데이터 분석에 오신 것을 환영합니다!
             
             이 단계에서는 설문조사의 **자유 서술형 답변(주관식)**을 분석합니다.
-            Gemini AI 패널을 이용해 사용자의 심리와 Pain Point를 입체적으로 분류하는 **공감 맵(Step 5)**, 
-            텍스트 키워드 의미 연결망 그래프를 시각화하는 **네트워크 분석(Step 6)**, 
-            그리고 아이디에이션을 유도하는 **HMW(How Might We) 질문 도출(Step 7)**을 진행합니다.
-            
-            * **Stage 1의 결과 반영**: 이전 단계에서 객관식 파일을 분석하셨다면, 정량 분석 요약 데이터가 자동으로 연계되어 Step 7의 HMW 질문 도출 시 복합 맥락으로 활용됩니다. (객관식 분석 단계를 건너뛰고 주관식 파일만 단독 분석하는 것도 물론 가능합니다.)
+            Gemini AI 패널을 이용해 사용자의 심리와 Pain Point를 입체적으로 분류하는 **공감 맵(Step 6)**, 
+            텍스트 키워드 의미 연결망 그래프를 시각화하는 **네트워크 분석(Step 7)**, 
+            그리고 아이디에이션을 유도하는 **HMW(How Might We) 질문 도출(Step 8)**을 진행합니다.
             
             #### 💡 시작하는 방법:
             1. 왼쪽 사이드바에서 **주관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
-               * 테스트가 필요하신 경우 워크스페이스에 생성된 `mock_subjective_data.csv` 파일을 사용하실 수 있습니다.
             2. 파일 업로드 후, 각 분석 탭을 클릭하고 하단의 분석 실행 버튼을 누르면 AI 연동 분석이 개시됩니다.
         """)
     else:
         df_sub = st.session_state.df_sub
         
-        # Tabs for Steps 5~7
-        tabs_sub = st.tabs(["Step 5: 공감 맵 분석", "Step 6: 네트워크 분석", "Step 7: HMW 도출"])
+        # Tabs for Steps 6~8
+        tabs_sub = st.tabs(["Step 6: 공감 맵 분석", "Step 7: 네트워크 분석", "Step 8: HMW 도출"])
         
-        # --- Step 5: Empathy Map ---
+        # --- Step 6: Empathy Map ---
         with tabs_sub[0]:
             st.subheader("💡 AI 기반 주관식 응답 공감 맵(Empathy Map)")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 5. 공감 맵 분석 가이드</div>
+                    <div class="guide-title">💡 Step 6. 공감 맵 분석 가이드</div>
                     Gemini AI를 사용해 주관식 의견들에 포함된 고객(사용자)의 감정과 요구사항을 분류하고 요약합니다. 
                     말한 내용(Says), 내면의 생각(Thinks), 취하는 행동(Does), 복합적인 감정(Feels)의 4개 도메인으로 나뉘어 프리미엄 카드 레이아웃으로 결과를 제공합니다.
                 </div>
@@ -1086,13 +1219,13 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                         mime="application/json"
                     )
                     
-        # --- Step 6: Network Analysis ---
+        # --- Step 7: Network Analysis ---
         with tabs_sub[1]:
             st.subheader("🕸️ 키워드 의미망 동시출현 네트워크 분석")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 6. 네트워크 분석 가이드</div>
+                    <div class="guide-title">💡 Step 7. 네트워크 분석 가이드</div>
                     사용자들의 피드백 문장에서 핵심 단어를 끄집어낸 후, 이 단어들이 서로 어떤 연결고리를 맺고 있는지 시각화합니다.
                     마우스로 노드를 움직이거나 휠로 확대/축소하며 연관 깊이를 분석할 수 있으며, 키워드 연관성 가중치 테이블과 차트를 각각 저장할 수 있습니다.
                 </div>
@@ -1120,12 +1253,10 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                           "nodes": [
                             {{"name": "시스템 오류", "freq": 12}},
                             {{"name": "자료 다양성", "freq": 8}},
-                            ...
                           ],
                           "links": [
                             {{"source": "시스템 오류", "target": "서비스 품질", "weight": 5}},
                             {{"source": "자료 다양성", "target": "콘텐츠 부족", "weight": 4}},
-                            ...
                           ]
                         }}
                         (참고: links의 weight는 1에서 10 사이의 연관성 강도(정수)이며, 두 키워드가 자주 함께 언급되었거나 인과관계가 밀접할수록 큰 가중치를 설정해 주세요.)
