@@ -536,13 +536,13 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
             #### 💡 시작하는 방법:
             1. ① 왼쪽 사이드바에서 **객관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
                * 테스트가 필요하신 경우 워크스페이스에 생성된 `mock_objective_data.csv` 파일을 사용하실 수 있습니다.
-            2. ② 파일 업로드 후, 데이터 결측치를 정제(Step 1)하고, 인구통계 및 객관식 분석(Step 2)과 만족도 기술 통계(Step 3) 탭을 통해 분석을 진행해 보세요.
+            2. ② 파일 업로드 후, 데이터 결측치를 정제(Step 1)하고, 인구통계 분석(Step 2)과 만족도 기술 통계(Step 3) 탭을 통해 분석을 진행해 보세요.
         """)
     else:
         df_obj = st.session_state.df_obj
         
         # Tabs for Steps 1~3
-        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 및 객관식 분석", "Step 3: 기술 통계 분석"])
+        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 기술 통계 분석"])
         
         # --- Step 1: Preprocessing ---
         with tabs_obj[0]:
@@ -592,11 +592,11 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
             
         # --- Step 2: Demographic Analysis ---
         with tabs_obj[1]:
-            st.subheader("👥 인구통계 및 객관식 분포 분석")
+            st.subheader("👥 인구통계 분석")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 2. 인구통계 및 객관식 분석 가이드</div>
+                    <div class="guide-title">💡 Step 2. 인구통계 분석 가이드</div>
                     성별, 연령대와 같은 응답자 배경 특성(인구통계) 또는 각 객관식 질문별 선택지 비율을 확인하는 단계입니다. 
                     집계된 빈도 테이블은 클립보드 복사 혹은 CSV 다운로드를 통해 엑셀로 내보낼 수 있으며, 생성된 파이/바 차트는 이미지 파일(PNG)로 바로 저장이 가능합니다.
                 </div>
