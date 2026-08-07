@@ -416,10 +416,10 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
         
         with st.sidebar.expander("❓ 각 설정 항목의 차이점 안내"):
             st.markdown("""
-                * **객관식/선택형 열**: 
-                  텍스트 응답의 **선택 비율(%)과 빈도**를 집계하는 데 사용됩니다 (Step 2 분석).
+                * **인구통계학 열 / 객관식·선택형 열**: 
+                  성별, 연령대 혹은 객관식 응답의 **선택 비율(%)과 빈도**를 집계하는 데 사용됩니다 (Step 2 분석).
                 * **수치형/5점척도 열**: 
-                  숫자 응답의 **평균값, 표준편차**를 산출하는 데 사용됩니다 (Step 3 분석).
+                  숫자로 응답된 만족도 등의 **평균값, 표준편차**를 산출하는 데 사용됩니다 (Step 3 분석).
                 
                 💡 *동일한 5점 척도 만족도 문항이라도 평균값과 상세 선택 비율을 모두 보고 싶다면 두 상자에 모두 선택해 두셔도 좋습니다!*
             """)
@@ -523,15 +523,15 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
             성별이나 연령대와 같은 **인구통계 정보**, 그리고 만족도 평점과 같은 **숫자형 척도 데이터**를 집계하고 시각화할 수 있습니다.
             
             #### 💡 시작하는 방법:
-            1. 왼쪽 사이드바에서 **객관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
+            1. ① 왼쪽 사이드바에서 **객관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
                * 테스트가 필요하신 경우 워크스페이스에 생성된 `mock_objective_data.csv` 파일을 사용하실 수 있습니다.
-            2. 파일 업로드 후, 데이터 결측치를 정제(Step 1)하고, 인구통계 분포(Step 2)와 만족도 기술 통계(Step 3) 탭을 통해 분석을 진행해 보세요.
+            2. ② 파일 업로드 후, 데이터 결측치를 정제(Step 1)하고, 인구통계 및 객관식 분석(Step 2)과 만족도 기술 통계(Step 3) 탭을 통해 분석을 진행해 보세요.
         """)
     else:
         df_obj = st.session_state.df_obj
         
         # Tabs for Steps 1~3
-        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 기술 통계 분석"])
+        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 및 객관식 분석", "Step 3: 기술 통계 분석"])
         
         # --- Step 1: Preprocessing ---
         with tabs_obj[0]:
@@ -581,20 +581,21 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
             
         # --- Step 2: Demographic Analysis ---
         with tabs_obj[1]:
-            st.subheader("👥 인구통계 및 범주형 분포 분석")
+            st.subheader("👥 인구통계 및 객관식 분포 분석")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 2. 인구통계 분석 가이드</div>
-                    성별, 연령대, 직급, 직무 등 범주별 집단 비율을 확인하는 단계입니다. 
+                    <div class="guide-title">💡 Step 2. 인구통계 및 객관식 분석 가이드</div>
+                    성별, 연령대와 같은 응답자 배경 특성(인구통계) 또는 각 객관식 질문별 선택지 비율을 확인하는 단계입니다. 
                     집계된 빈도 테이블은 클립보드 복사 혹은 CSV 다운로드를 통해 엑셀로 내보낼 수 있으며, 생성된 파이/바 차트는 이미지 파일(PNG)로 바로 저장이 가능합니다.
                 </div>
             """, unsafe_allow_html=True)
             
-            if not dem_cols:
-                st.info("사이드바에서 분석할 '인구통계학(범주형) 열'을 1개 이상 선택해 주세요.")
+            combined_cat_cols = list(dict.fromkeys(list(dem_cols) + list(obj_cols)))
+            if not combined_cat_cols:
+                st.info("사이드바에서 분석할 '인구통계학 열' 또는 '객관식/선택형 열'을 1개 이상 선택해 주세요.")
             else:
-                selected_dem_col = st.selectbox("집계할 인구통계 컬럼 선택", dem_cols)
+                selected_dem_col = st.selectbox("분석할 컬럼 선택 (인구통계 / 객관식 문항)", combined_cat_cols)
                 series = df_obj[selected_dem_col].dropna().astype(str).str.strip()
                 
                 if series.empty:
