@@ -677,94 +677,199 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         except Exception as e:
                             st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
                             
-        # --- Step 3: Item Frequency Analysis ---
+        # --- Step 3: Item Frequency & Sub-factor Analysis ---
         with tabs_obj[2]:
-            st.subheader("📊 객관식 문항별 빈도분석")
+            st.subheader("📊 문항별 빈도 및 하위 요인 분석")
             
-            st.markdown("""
-                <div class="guide-box">
-                    <div class="guide-title">💡 Step 3. 문항별 빈도분석 가이드</div>
-                    설문조사의 개별 객관식/선택형 문항들을 대상으로, 각 선택지 보기별 응답 빈도수와 비율(%)을 집계하고 시각화하는 단계입니다.
-                </div>
-            """, unsafe_allow_html=True)
+            step3_sub_mode = st.radio(
+                "분석 세부 유형 선택",
+                ["문항별 빈도분석", "하위 요인별 분석"],
+                horizontal=True,
+                help="개별 문항에 대한 비율을 집계하는 '빈도분석'과, 유사한 여러 문항들을 하나로 묶어 연관 분포를 보는 '하위 요인별 분석' 중 선택합니다."
+            )
             
-            if not obj_cols:
-                st.info("사이드바에서 분석할 '객관식/선택형 열'을 1개 이상 선택해 주세요.")
-            else:
-                selected_obj_col = st.selectbox("분석할 객관식 컬럼 선택", obj_cols)
-                series = df_obj[selected_obj_col].dropna().astype(str).str.strip()
+            st.markdown("---")
+            
+            if step3_sub_mode == "문항별 빈도분석":
+                st.markdown("""
+                    <div class="guide-box">
+                        <div class="guide-title">💡 문항별 빈도분석 가이드</div>
+                        설문조사의 개별 객관식/선택형 문항들을 대상으로, 각 선택지 보기별 응답 빈도수와 비율(%)을 집계하고 시각화하는 단계입니다.
+                    </div>
+                """, unsafe_allow_html=True)
                 
-                if series.empty:
-                    st.warning("선택한 컬럼에 분석 가능한 유효 데이터가 없습니다.")
+                if not obj_cols:
+                    st.info("사이드바에서 분석할 '객관식/선택형 열'을 1개 이상 선택해 주세요.")
                 else:
-                    total_valid = len(series)
-                    counts = series.value_counts()
-                    df_freq = pd.DataFrame({
-                        selected_obj_col: counts.index,
-                        '빈도': counts.values,
-                        '비율(%)': (counts.values / total_valid * 100).round(1)
-                    })
+                    selected_obj_col = st.selectbox("분석할 객관식 컬럼 선택", obj_cols)
+                    series = df_obj[selected_obj_col].dropna().astype(str).str.strip()
                     
-                    col_o_1, col_o_2 = st.columns([1, 1])
-                    with col_o_1:
-                        st.markdown(f"##### {selected_obj_col} 빈도 분포표")
-                        st.dataframe(df_freq, use_container_width=True, hide_index=True)
+                    if series.empty:
+                        st.warning("선택한 컬럼에 분석 가능한 유효 데이터가 없습니다.")
+                    else:
+                        total_valid = len(series)
+                        counts = series.value_counts()
+                        df_freq = pd.DataFrame({
+                            selected_obj_col: counts.index,
+                            '빈도': counts.values,
+                            '비율(%)': (counts.values / total_valid * 100).round(1)
+                        })
                         
-                        st.markdown("🤖 **복사 및 다운로드**")
-                        tsv_data = df_freq.to_csv(sep='\t', index=False)
-                        st.code(tsv_data, language='text')
-                        st.caption("텍스트 상자 우측 복사 아이콘으로 스프레드시트에 쉽게 붙여넣으세요.")
+                        col_o_1, col_o_2 = st.columns([1, 1])
+                        with col_o_1:
+                            st.markdown(f"##### {selected_obj_col} 빈도 분포표")
+                            st.dataframe(df_freq, use_container_width=True, hide_index=True)
+                            
+                            st.markdown("🤖 **복사 및 다운로드**")
+                            tsv_data = df_freq.to_csv(sep='\t', index=False)
+                            st.code(tsv_data, language='text')
+                            st.caption("텍스트 상자 우측 복사 아이콘으로 스프레드시트에 쉽게 붙여넣으세요.")
+                            
+                            csv_data = df_freq.to_csv(index=False).encode('utf-8-sig')
+                            st.download_button(
+                                label="📥 CSV 다운로드",
+                                data=csv_data,
+                                file_name=f"frequency_{selected_obj_col}.csv",
+                                mime="text/csv",
+                                key=f"dl_csv_obj_{selected_obj_col}"
+                            )
+                            
+                        with col_o_2:
+                            st.markdown("##### 시각화 차트")
+                            chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"], key="obj_chart")
+                            
+                            if chart_type == "원형 차트 (Pie Chart)":
+                                fig = px.pie(df_freq, names=selected_obj_col, values='빈도', 
+                                             title=f"{selected_obj_col} 분포 비율",
+                                             color_discrete_sequence=px.colors.qualitative.Safe)
+                            else:
+                                fig = px.bar(df_freq, x=selected_obj_col, y='빈도', 
+                                             title=f"{selected_obj_col} 빈도수",
+                                             color=selected_obj_col,
+                                             color_discrete_sequence=px.colors.qualitative.Safe)
+                            fig.update_layout(font=dict(family="Noto Sans KR"))
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            try:
+                                plt.figure(figsize=(6, 4))
+                                if chart_type == "원형 차트 (Pie Chart)":
+                                    plt.pie(df_freq['빈도'], labels=df_freq[selected_obj_col], autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
+                                    plt.title(f"{selected_obj_col} 분포 비율")
+                                else:
+                                    plt.bar(df_freq[selected_obj_col], df_freq['빈도'], color='#3b82f6')
+                                    plt.ylabel("빈도 (명)")
+                                    plt.title(f"{selected_obj_col} 빈도수")
+                                    plt.xticks(rotation=45)
+                                plt.tight_layout()
+                                img_buf = io.BytesIO()
+                                plt.savefig(img_buf, format='png', dpi=150)
+                                img_buf.seek(0)
+                                plt.close()
+                                
+                                st.download_button(
+                                    label="🖼️ 차트 PNG 이미지 다운로드",
+                                    data=img_buf,
+                                    file_name=f"chart_{selected_obj_col}.png",
+                                    mime="image/png",
+                                    key=f"dl_img_obj_{selected_obj_col}"
+                                )
+                            except Exception as e:
+                                st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
+                                
+            elif step3_sub_mode == "하위 요인별 분석":
+                st.markdown("""
+                    <div class="guide-box">
+                        <div class="guide-title">💡 하위 요인별 분석 가이드</div>
+                        성격이 유사한 여러 만족도 문항(예: 서비스 친절도 관련 3개 문항, 시설 환경 관련 4개 문항 등)을 하나의 <b>하위 요인(그룹)</b>으로 묶어서 통합 평균과 비율 분포를 비교 및 집계하는 단계입니다.
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                num_factors = st.number_input("생성할 하위 요인(그룹) 개수", min_value=1, max_value=8, value=2, step=1)
+                
+                st.markdown("##### 👥 하위 요인 그룹 설정")
+                group_data = []
+                for idx in range(int(num_factors)):
+                    col_f1, col_f2 = st.columns([1, 2])
+                    with col_f1:
+                        g_name = st.text_input(f"요인 {idx+1} 이름", value=f"요인 {idx+1}", key=f"g_name_{idx}")
+                    with col_f2:
+                        g_cols = st.multiselect(
+                            f"요인 {idx+1}에 포함할 문항 선택",
+                            options=list(df_obj.columns),
+                            default=[],
+                            key=f"g_cols_{idx}"
+                        )
+                    if g_cols:
+                        group_data.append((g_name, g_cols))
+                    st.markdown("---")
+                
+                if not group_data:
+                    st.info("각 그룹에 최소 1개 이상의 설문 문항을 선택해 추가해 주세요.")
+                else:
+                    st.markdown("### 📊 하위 요인별 분석 결과")
+                    
+                    # 1. Composite descriptive statistics
+                    factor_stats = []
+                    for g_name, g_cols in group_data:
+                        # Combine numerical values from the group
+                        combined_series = pd.concat([pd.to_numeric(df_obj[col], errors="coerce") for col in g_cols]).dropna()
+                        if not combined_series.empty:
+                            factor_stats.append({
+                                "하위 요인 (그룹)": g_name,
+                                "포함 문항 수": len(g_cols),
+                                "통합 응답 수": len(combined_series),
+                                "통합 평균 만족도": round(combined_series.mean(), 2),
+                                "통합 표준편차": round(combined_series.std(), 2),
+                                "통합 중앙값": round(combined_series.median(), 2)
+                            })
+                    
+                    if factor_stats:
+                        df_factors = pd.DataFrame(factor_stats)
+                        st.markdown("##### 📊 요인별 통합 기술통계 요약표")
+                        st.dataframe(df_factors, use_container_width=True, hide_index=True)
                         
-                        csv_data = df_freq.to_csv(index=False).encode('utf-8-sig')
+                        csv_factors = df_factors.to_csv(index=False).encode('utf-8-sig')
                         st.download_button(
-                            label="📥 CSV 다운로드",
-                            data=csv_data,
-                            file_name=f"frequency_{selected_obj_col}.csv",
+                            label="📥 요인별 요약표 CSV 다운로드",
+                            data=csv_factors,
+                            file_name="sub_factor_summary.csv",
                             mime="text/csv",
-                            key=f"dl_csv_obj_{selected_obj_col}"
+                            key="dl_factor_summary"
                         )
                         
-                    with col_o_2:
-                        st.markdown("##### 시각화 차트")
-                        chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"], key="obj_chart")
-                        
-                        if chart_type == "원형 차트 (Pie Chart)":
-                            fig = px.pie(df_freq, names=selected_obj_col, values='빈도', 
-                                         title=f"{selected_obj_col} 분포 비율",
-                                         color_discrete_sequence=px.colors.qualitative.Safe)
-                        else:
-                            fig = px.bar(df_freq, x=selected_obj_col, y='빈도', 
-                                         title=f"{selected_obj_col} 빈도수",
-                                         color=selected_obj_col,
-                                         color_discrete_sequence=px.colors.qualitative.Safe)
-                        fig.update_layout(font=dict(family="Noto Sans KR"))
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        try:
-                            plt.figure(figsize=(6, 4))
-                            if chart_type == "원형 차트 (Pie Chart)":
-                                plt.pie(df_freq['빈도'], labels=df_freq[selected_obj_col], autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
-                                plt.title(f"{selected_obj_col} 분포 비율")
-                            else:
-                                plt.bar(df_freq[selected_obj_col], df_freq['빈도'], color='#3b82f6')
-                                plt.ylabel("빈도 (명)")
-                                plt.title(f"{selected_obj_col} 빈도수")
-                                plt.xticks(rotation=45)
-                            plt.tight_layout()
-                            img_buf = io.BytesIO()
-                            plt.savefig(img_buf, format='png', dpi=150)
-                            img_buf.seek(0)
-                            plt.close()
+                        # Plotly factor comparison chart
+                        fig_factor = px.bar(df_factors, x="하위 요인 (그룹)", y="통합 평균 만족도", text="통합 평균 만족도",
+                                           title="하위 요인(그룹)별 통합 평균 점수 비교",
+                                           color="통합 평균 만족도", color_continuous_scale=px.colors.sequential.Sunset)
+                        fig_factor.update_traces(textposition='outside')
+                        fig_factor.update_layout(font=dict(family="Noto Sans KR"))
+                        st.plotly_chart(fig_factor, use_container_width=True)
+                    
+                    # 2. Combined categorical distributions
+                    st.markdown("##### 📈 요인별 통합 응답 비율 분포")
+                    for g_name, g_cols in group_data:
+                        # Combine text responses from the group
+                        combined_text = pd.concat([df_obj[col].dropna().astype(str).str.strip() for col in g_cols])
+                        if not combined_text.empty:
+                            total = len(combined_text)
+                            counts = combined_text.value_counts()
+                            df_g_freq = pd.DataFrame({
+                                "응답 보기": counts.index,
+                                "빈도": counts.values,
+                                "비율(%)": (counts.values / total * 100).round(1)
+                            })
                             
-                            st.download_button(
-                                label="🖼️ 차트 PNG 이미지 다운로드",
-                                data=img_buf,
-                                file_name=f"chart_{selected_obj_col}.png",
-                                mime="image/png",
-                                key=f"dl_img_obj_{selected_obj_col}"
-                            )
-                        except Exception as e:
-                            st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
+                            with st.expander(f"📢 [{g_name}] 통합 응답 상세 분포 보기 (총 {total}건)"):
+                                col_gf1, col_gf2 = st.columns([1, 1])
+                                with col_gf1:
+                                    st.dataframe(df_g_freq, use_container_width=True, hide_index=True)
+                                with col_gf2:
+                                    fig_gf_pie = px.pie(df_g_freq, names="응답 보기", values="빈도",
+                                                         title=f"[{g_name}] 통합 보기 선택 비율",
+                                                         color_discrete_sequence=px.colors.qualitative.Safe)
+                                    fig_gf_pie.update_layout(font=dict(family="Noto Sans KR"))
+                                    st.plotly_chart(fig_gf_pie, use_container_width=True)
+
 
         # --- Step 4: Descriptive Analysis ---
         with tabs_obj[3]:
