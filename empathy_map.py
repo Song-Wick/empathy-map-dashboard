@@ -258,7 +258,7 @@ def infer_categorical_columns(df: pd.DataFrame, exclude_columns: list[str]) -> l
 
         if is_object_like or is_low_cardinality_number or unique_ratio <= 0.35:
             categorical_columns.append(column)
-    return categorical_columns[:12]
+    return categorical_columns[:50]
 
 def infer_numeric_columns(df: pd.DataFrame, exclude_columns: list[str]) -> list[str]:
     numeric_columns = []
@@ -275,7 +275,7 @@ def infer_numeric_columns(df: pd.DataFrame, exclude_columns: list[str]) -> list[
         looks_like_id = unique_ratio > 0.9 and not any(keyword in column_name for keyword in LIKERT_KEYWORDS)
         if not looks_like_id:
             numeric_columns.append(column)
-    return numeric_columns[:12]
+    return numeric_columns[:50]
 
 def infer_demographic_columns(categorical_columns: list[str], custom_keywords: list[str] = []) -> list[str]:
     keywords = list(DEMOGRAPHIC_KEYWORDS) + [k.strip() for k in custom_keywords if k.strip()]
@@ -428,23 +428,31 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
         detected_num = infer_numeric_columns(df_obj, [])
         
         st.sidebar.markdown("##### 📋 컬럼 선택")
+        st.sidebar.caption("💡 각 선택상자 안의 빨간 항목 우측 'x'를 클릭하면 삭제되고, 빈 공간이나 우측 'v'를 클릭하면 다른 열을 선택해 추가할 수 있습니다.")
+        
+        all_columns = list(df_obj.columns)
+        
         dem_cols = st.sidebar.multiselect(
             "인구통계학(성별, 연령 등) 열 선택",
-            options=list(df_obj.columns),
-            default=[c for c in detected_dem if c in df_obj.columns],
+            options=all_columns,
+            default=[c for c in detected_dem if c in all_columns],
             help="기본으로 자동 감지되지 않는 열은 마우스로 박스를 클릭해 직접 추가할 수 있습니다."
         )
         
+        select_all_obj = st.sidebar.checkbox("객관식 모든 열 일괄 선택", value=False, help="이 상자를 클릭하면 업로드된 파일의 모든 열을 객관식 분석 대상으로 지정합니다.")
+        obj_default = all_columns if select_all_obj else [c for c in detected_cat if c in all_columns and c not in dem_cols]
         obj_cols = st.sidebar.multiselect(
             "객관식/선택형 열 선택",
-            options=list(df_obj.columns),
-            default=[c for c in detected_cat if c in df_obj.columns and c not in dem_cols]
+            options=all_columns,
+            default=obj_default
         )
         
+        select_all_num = st.sidebar.checkbox("수치형 모든 열 일괄 선택", value=False, help="이 상자를 클릭하면 업로드된 파일의 모든 열을 기술통계 분석 대상으로 지정합니다.")
+        num_default = all_columns if select_all_num else [c for c in detected_num if c in all_columns]
         num_cols = st.sidebar.multiselect(
             "수치형/5점척도 열 선택",
-            options=list(df_obj.columns),
-            default=[c for c in detected_num if c in df_obj.columns]
+            options=all_columns,
+            default=num_default
         )
         
         # Keep quantitative summary updated in session state
@@ -878,55 +886,61 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                 st.warning("네트워크 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
             else:
                 if st.button("네트워크 분석 실행", key="run_network"):
-                    with st.spinner("텍스트에서 키워드를 파싱하고 빈도 및 가중치를 매핑하고 있습니다..."):
+                    with st.spinner("Gemini AI가 서술형 답변의 어휘망 연결 밀도와 인과관계를 매핑하고 있습니다..."):
                         survey_text = build_survey_text_summary(df_sub, sub_cols)
                         
                         prompt = f"""
-                        설문조사 주관식 답변들에서 핵심이 되는 명사 및 구문(키워드)을 10~15개 추출해 주세요.
-                        주로 프로그램 참가자들이 겪은 경험, Pain Point, 요구사항과 관련된 중요한 키워드를 골라야 합니다.
-                        출력 형식은 오직 쉼표로만 구분된 문자열이어야 합니다. 다른 설명이나 특수문자, 마크다운 펜스는 절대 포함하지 마세요.
-
-                        예: 협업, 일정 관리, 소통, 의견 대립, 성취감, 역할 분담, 난이도 조절
+                        설문조사의 주관식 답변 데이터를 분석하여, 핵심 키워드 10~15개 간의 연관 관계망(동시출현 및 주제 간 밀접성)을 추출해 주세요.
+                        단어들이 한 문단에 동시에 언급된 빈도와 의미상의 인과적 연결성을 고려하여 노드(어휘 및 출현빈도)와 연결 강도(에지 가중치)를 산출해 주세요.
 
                         [주관식 답변 데이터]
                         {survey_text}
+
+                        [출력 형식]
+                        반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 설명은 제외해 주세요.
+                        {{
+                          "nodes": [
+                            {{"name": "시스템 오류", "freq": 12}},
+                            {{"name": "자료 다양성", "freq": 8}},
+                            ...
+                          ],
+                          "links": [
+                            {{"source": "시스템 오류", "target": "서비스 품질", "weight": 5}},
+                            {{"source": "자료 다양성", "target": "콘텐츠 부족", "weight": 4}},
+                            ...
+                          ]
+                        }}
+                        (참고: links의 weight는 1에서 10 사이의 연관성 강도(정수)이며, 두 키워드가 자주 함께 언급되었거나 인과관계가 밀접할수록 큰 가중치를 설정해 주세요.)
                         """
                         
                         try:
                             response = client.models.generate_content(
                                 model='gemini-2.5-flash',
-                                contents=prompt
+                                contents=prompt,
+                                config={'temperature': 0.1}
                             )
-                            keywords_raw = response.text.strip()
-                            keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
-                            keywords = list(dict.fromkeys(keywords))
+                            net_data = parse_json_from_response(response.text)
                             
-                            all_responses = []
-                            for col in sub_cols:
-                                all_responses.extend([
-                                    str(val).strip()
-                                    for val in df_sub[col].dropna()
-                                    if str(val).strip()
-                                ])
-                                
-                            freq_dict = {}
-                            for kw in keywords:
-                                freq_dict[kw] = sum(1 for r in all_responses if kw in r)
-                                
+                            nodes = net_data.get("nodes", [])
+                            keywords = [n.get("name") for n in nodes if n.get("name")]
+                            freq_dict = {n.get("name"): n.get("freq", 1) for n in nodes if n.get("name")}
+                            
                             co_matrix = pd.DataFrame(0, index=keywords, columns=keywords)
-                            for r in all_responses:
-                                present = [kw for kw in keywords if kw in r]
-                                for i in range(len(present)):
-                                    for j in range(i + 1, len(present)):
-                                        co_matrix.loc[present[i], present[j]] += 1
-                                        co_matrix.loc[present[j], present[i]] += 1
-                                        
+                            
+                            for link in net_data.get("links", []):
+                                src = link.get("source")
+                                tgt = link.get("target")
+                                w = link.get("weight", 1)
+                                if src in keywords and tgt in keywords:
+                                    co_matrix.loc[src, tgt] = w
+                                    co_matrix.loc[tgt, src] = w
+                                    
                             st.session_state.network_keywords = keywords
                             st.session_state.network_matrix = co_matrix
                             st.session_state.network_frequencies = freq_dict
-                            st.success("네트워크 구조화 완성!")
+                            st.success("네트워크 분석 완료!")
                         except Exception as e:
-                            st.error(f"네트워크 분석 연산 중 에러: {e}")
+                            st.error(f"네트워크 분석 중 오류 발생: {e}")
                             
                 # Draw network if exists
                 if "network_matrix" in st.session_state:
