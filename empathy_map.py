@@ -58,8 +58,9 @@ HMW를 도출할 때는 문제를 곧바로 해결책으로 바꾸지 말고, Pa
 
 DEMOGRAPHIC_KEYWORDS = (
     "성별", "연령", "나이", "학년", "학과", "전공", "직무", "직군", "부서", "소속",
-    "지역", "거주", "경력", "직업", "학교", "학부", "학위", "gender", "age",
-    "grade", "major", "department", "region", "career", "job", "role",
+    "지역", "거주", "경력", "직업", "학교", "학부", "학위", "신분", "직급", "구분",
+    "gender", "age", "grade", "major", "department", "region", "career", "job", 
+    "role", "status", "class"
 )
 LIKERT_KEYWORDS = (
     "만족", "점수", "평점", "효과", "이해", "난이도", "추천", "동의", "필요", "도움",
@@ -276,10 +277,11 @@ def infer_numeric_columns(df: pd.DataFrame, exclude_columns: list[str]) -> list[
             numeric_columns.append(column)
     return numeric_columns[:12]
 
-def infer_demographic_columns(categorical_columns: list[str]) -> list[str]:
+def infer_demographic_columns(categorical_columns: list[str], custom_keywords: list[str] = []) -> list[str]:
+    keywords = list(DEMOGRAPHIC_KEYWORDS) + [k.strip() for k in custom_keywords if k.strip()]
     return [
         col for col in categorical_columns
-        if any(keyword.lower() in str(col).lower() for keyword in DEMOGRAPHIC_KEYWORDS)
+        if any(keyword.lower() in str(col).lower() for keyword in keywords)
     ][:6]
 
 def parse_json_from_response(text: str) -> dict:
@@ -413,14 +415,24 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
         st.sidebar.markdown("### 📊 정량 컬럼 분석 구성")
         
         # Categorical and Numeric column inferences
+        st.sidebar.markdown("##### 🔍 컬럼 감지 설정")
+        custom_demo_input = st.sidebar.text_input(
+            "인구통계 감지 키워드 추가 (쉼표 구분)", 
+            value="신분, 직급, 구분",
+            help="여기에 쉼표로 구분해 입력한 키워드가 컬럼명에 포함되어 있으면 인구통계학 열로 자동 분류(체크)됩니다."
+        )
+        custom_keywords = [k.strip() for k in custom_demo_input.split(",") if k.strip()]
+        
         detected_cat = infer_categorical_columns(df_obj, [])
-        detected_dem = infer_demographic_columns(detected_cat)
+        detected_dem = infer_demographic_columns(detected_cat, custom_keywords)
         detected_num = infer_numeric_columns(df_obj, [])
         
+        st.sidebar.markdown("##### 📋 컬럼 선택")
         dem_cols = st.sidebar.multiselect(
             "인구통계학(성별, 연령 등) 열 선택",
             options=list(df_obj.columns),
-            default=[c for c in detected_dem if c in df_obj.columns]
+            default=[c for c in detected_dem if c in df_obj.columns],
+            help="기본으로 자동 감지되지 않는 열은 마우스로 박스를 클릭해 직접 추가할 수 있습니다."
         )
         
         obj_cols = st.sidebar.multiselect(
