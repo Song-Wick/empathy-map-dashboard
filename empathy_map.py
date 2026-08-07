@@ -198,9 +198,9 @@ def inject_custom_css():
 # ========== [Helper Functions] ==========
 def get_gemini_client():
     """Get genai.Client using key from secrets or session state."""
-    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    api_key = st.session_state.get("gemini_api_key", "")
     if not api_key:
-        api_key = st.session_state.get("gemini_api_key", "")
+        api_key = st.secrets.get("GEMINI_API_KEY", "")
     if api_key.strip():
         return genai.Client(api_key=api_key.strip())
     return None
@@ -342,7 +342,15 @@ st.markdown("""
 
 # ========== [Sidebar Configuration] ==========
 st.sidebar.markdown("### 🔑 API 설정")
-gemini_key_input = st.sidebar.text_input("Gemini API Key 입력", type="password", help="Gemini API Key를 입력하면 공감맵, 네트워크, HMW 분석이 활성화됩니다.")
+default_key = st.secrets.get("GEMINI_API_KEY", st.session_state.get("gemini_api_key", ""))
+if st.secrets.get("GEMINI_API_KEY", ""):
+    st.sidebar.success("✅ Secrets에서 API Key가 자동 로드되었습니다.")
+gemini_key_input = st.sidebar.text_input(
+    "Gemini API Key 입력", 
+    type="password", 
+    value=default_key,
+    help="Gemini API Key를 입력하면 공감맵, 네트워크, HMW 분석이 활성화됩니다."
+)
 if gemini_key_input:
     st.session_state["gemini_api_key"] = gemini_key_input
 
