@@ -240,7 +240,7 @@ def infer_subjective_columns(df: pd.DataFrame) -> list[str]:
     for column in df.columns:
         if is_likely_text_response(df[column]):
             subjective_columns.append(column)
-    return subjective_columns[:5]
+    return subjective_columns[:50]
 
 def infer_categorical_columns(df: pd.DataFrame, exclude_columns: list[str]) -> list[str]:
     categorical_columns = []
@@ -486,12 +486,17 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
         df_sub = st.session_state.df_sub
         st.sidebar.markdown("---")
         st.sidebar.markdown("### ✍️ 주관식 컬럼 분석 구성")
+        st.sidebar.caption("💡 각 선택상자 안의 빨간 항목 우측 'x'를 클릭하면 삭제되고, 빈 공간이나 우측 'v'를 클릭하면 다른 열을 선택해 추가할 수 있습니다.")
         
+        all_sub_columns = list(df_sub.columns)
         detected_sub = infer_subjective_columns(df_sub)
+        
+        select_all_sub = st.sidebar.checkbox("주관식 모든 열 일괄 선택", value=False, help="이 상자를 클릭하면 업로드된 파일의 모든 열을 주관식 분석 대상으로 지정합니다.")
+        sub_default = all_sub_columns if select_all_sub else [c for c in detected_sub if c in all_sub_columns]
         sub_cols = st.sidebar.multiselect(
             "주관식 서술형 열 선택",
-            options=list(df_sub.columns),
-            default=[c for c in detected_sub if c in df_sub.columns]
+            options=all_sub_columns,
+            default=sub_default
         )
 
 # ========== [Main Dashboard Render] ==========
