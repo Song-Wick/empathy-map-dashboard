@@ -541,8 +541,8 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
     else:
         df_obj = st.session_state.df_obj
         
-        # Tabs for Steps 1~3
-        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 기술 통계 분석"])
+        # Tabs for Steps 1~4
+        tabs_obj = st.tabs(["Step 1: 데이터 전처리", "Step 2: 인구통계 분석", "Step 3: 문항별 빈도분석", "Step 4: 기술 통계 분석"])
         
         # --- Step 1: Preprocessing ---
         with tabs_obj[0]:
@@ -597,16 +597,14 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
             st.markdown("""
                 <div class="guide-box">
                     <div class="guide-title">💡 Step 2. 인구통계 분석 가이드</div>
-                    성별, 연령대와 같은 응답자 배경 특성(인구통계) 또는 각 객관식 질문별 선택지 비율을 확인하는 단계입니다. 
-                    집계된 빈도 테이블은 클립보드 복사 혹은 CSV 다운로드를 통해 엑셀로 내보낼 수 있으며, 생성된 파이/바 차트는 이미지 파일(PNG)로 바로 저장이 가능합니다.
+                    성별, 연령대, 직급, 직무 등 설문 응답자의 사회·인구학적 배경 분포(빈도수 및 비율)를 파악하는 단계입니다.
                 </div>
             """, unsafe_allow_html=True)
             
-            combined_cat_cols = list(dict.fromkeys(list(dem_cols) + list(obj_cols)))
-            if not combined_cat_cols:
-                st.info("사이드바에서 분석할 '인구통계학 열' 또는 '객관식/선택형 열'을 1개 이상 선택해 주세요.")
+            if not dem_cols:
+                st.info("사이드바에서 분석할 '인구통계학 열'을 1개 이상 선택해 주세요.")
             else:
-                selected_dem_col = st.selectbox("분석할 컬럼 선택 (인구통계 / 객관식 문항)", combined_cat_cols)
+                selected_dem_col = st.selectbox("분석할 인구통계 컬럼 선택", dem_cols)
                 series = df_obj[selected_dem_col].dropna().astype(str).str.strip()
                 
                 if series.empty:
@@ -640,7 +638,7 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         
                     with col_d_2:
                         st.markdown("##### 시각화 차트")
-                        chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"])
+                        chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"], key="dem_chart")
                         
                         if chart_type == "원형 차트 (Pie Chart)":
                             fig = px.pie(df_freq, names=selected_dem_col, values='빈도', 
@@ -654,7 +652,6 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         fig.update_layout(font=dict(family="Noto Sans KR"))
                         st.plotly_chart(fig, use_container_width=True)
                         
-                        # Matplotlib download fallback
                         try:
                             plt.figure(figsize=(6, 4))
                             if chart_type == "원형 차트 (Pie Chart)":
@@ -680,13 +677,102 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         except Exception as e:
                             st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
                             
-        # --- Step 3: Descriptive Analysis ---
+        # --- Step 3: Item Frequency Analysis ---
         with tabs_obj[2]:
+            st.subheader("📊 객관식 문항별 빈도분석")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 3. 문항별 빈도분석 가이드</div>
+                    설문조사의 개별 객관식/선택형 문항들을 대상으로, 각 선택지 보기별 응답 빈도수와 비율(%)을 집계하고 시각화하는 단계입니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if not obj_cols:
+                st.info("사이드바에서 분석할 '객관식/선택형 열'을 1개 이상 선택해 주세요.")
+            else:
+                selected_obj_col = st.selectbox("분석할 객관식 컬럼 선택", obj_cols)
+                series = df_obj[selected_obj_col].dropna().astype(str).str.strip()
+                
+                if series.empty:
+                    st.warning("선택한 컬럼에 분석 가능한 유효 데이터가 없습니다.")
+                else:
+                    total_valid = len(series)
+                    counts = series.value_counts()
+                    df_freq = pd.DataFrame({
+                        selected_obj_col: counts.index,
+                        '빈도': counts.values,
+                        '비율(%)': (counts.values / total_valid * 100).round(1)
+                    })
+                    
+                    col_o_1, col_o_2 = st.columns([1, 1])
+                    with col_o_1:
+                        st.markdown(f"##### {selected_obj_col} 빈도 분포표")
+                        st.dataframe(df_freq, use_container_width=True, hide_index=True)
+                        
+                        st.markdown("🤖 **복사 및 다운로드**")
+                        tsv_data = df_freq.to_csv(sep='\t', index=False)
+                        st.code(tsv_data, language='text')
+                        st.caption("텍스트 상자 우측 복사 아이콘으로 스프레드시트에 쉽게 붙여넣으세요.")
+                        
+                        csv_data = df_freq.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button(
+                            label="📥 CSV 다운로드",
+                            data=csv_data,
+                            file_name=f"frequency_{selected_obj_col}.csv",
+                            mime="text/csv",
+                            key=f"dl_csv_obj_{selected_obj_col}"
+                        )
+                        
+                    with col_o_2:
+                        st.markdown("##### 시각화 차트")
+                        chart_type = st.radio("차트 타입 선택", ["원형 차트 (Pie Chart)", "막대 차트 (Bar Chart)"], key="obj_chart")
+                        
+                        if chart_type == "원형 차트 (Pie Chart)":
+                            fig = px.pie(df_freq, names=selected_obj_col, values='빈도', 
+                                         title=f"{selected_obj_col} 분포 비율",
+                                         color_discrete_sequence=px.colors.qualitative.Safe)
+                        else:
+                            fig = px.bar(df_freq, x=selected_obj_col, y='빈도', 
+                                         title=f"{selected_obj_col} 빈도수",
+                                         color=selected_obj_col,
+                                         color_discrete_sequence=px.colors.qualitative.Safe)
+                        fig.update_layout(font=dict(family="Noto Sans KR"))
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        try:
+                            plt.figure(figsize=(6, 4))
+                            if chart_type == "원형 차트 (Pie Chart)":
+                                plt.pie(df_freq['빈도'], labels=df_freq[selected_obj_col], autopct='%1.1f%%', startangle=90, colors=plt.cm.Paired.colors)
+                                plt.title(f"{selected_obj_col} 분포 비율")
+                            else:
+                                plt.bar(df_freq[selected_obj_col], df_freq['빈도'], color='#3b82f6')
+                                plt.ylabel("빈도 (명)")
+                                plt.title(f"{selected_obj_col} 빈도수")
+                                plt.xticks(rotation=45)
+                            plt.tight_layout()
+                            img_buf = io.BytesIO()
+                            plt.savefig(img_buf, format='png', dpi=150)
+                            img_buf.seek(0)
+                            plt.close()
+                            
+                            st.download_button(
+                                label="🖼️ 차트 PNG 이미지 다운로드",
+                                data=img_buf,
+                                file_name=f"chart_{selected_obj_col}.png",
+                                mime="image/png",
+                                key=f"dl_img_obj_{selected_obj_col}"
+                            )
+                        except Exception as e:
+                            st.caption(f"PNG 이미지 생성 중 일시적 오류: {e}")
+
+        # --- Step 4: Descriptive Analysis ---
+        with tabs_obj[3]:
             st.subheader("📈 수치형 및 척도 만족도 기술 통계")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 3. 기술 통계 분석 가이드</div>
+                    <div class="guide-title">💡 Step 4. 기술 통계 분석 가이드</div>
                     프로그램 만족도 점수, 혹은 수치로 표기된 설문 응답의 대표값들을 구합니다. 
                     평균, 표준편차, 중앙값, 최솟값/최댓값을 구하여 흩어짐 정도를 확인하고 여러 문항의 평균값을 막대 그래프로 시각적으로 대비해 봅니다.
                 </div>
@@ -747,11 +833,11 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
             ### 👋 [Stage 2] 주관식 데이터 분석에 오신 것을 환영합니다!
             
             이 단계에서는 설문조사의 **자유 서술형 답변(주관식)**을 분석합니다.
-            Gemini AI 패널을 이용해 사용자의 심리와 Pain Point를 입체적으로 분류하는 **공감 맵(Step 4)**, 
-            텍스트 키워드 동시출현 가중치를 표현하는 **의미 연결망 그래프(Step 5)**, 
-            그리고 아이디에이션을 유도하는 **HMW(How Might We) 질문 도출(Step 6)**을 진행합니다.
+            Gemini AI 패널을 이용해 사용자의 심리와 Pain Point를 입체적으로 분류하는 **공감 맵(Step 5)**, 
+            텍스트 키워드 의미 연결망 그래프를 시각화하는 **네트워크 분석(Step 6)**, 
+            그리고 아이디에이션을 유도하는 **HMW(How Might We) 질문 도출(Step 7)**을 진행합니다.
             
-            * **Stage 1의 결과 반영**: 이전 단계에서 객관식 파일을 분석하셨다면, 정량 분석 요약 데이터가 자동으로 연계되어 Step 6의 HMW 질문 도출 시 복합 맥락으로 활용됩니다. (객관식 분석 단계를 건너뛰고 주관식 파일만 단독 분석하는 것도 물론 가능합니다.)
+            * **Stage 1의 결과 반영**: 이전 단계에서 객관식 파일을 분석하셨다면, 정량 분석 요약 데이터가 자동으로 연계되어 Step 7의 HMW 질문 도출 시 복합 맥락으로 활용됩니다. (객관식 분석 단계를 건너뛰고 주관식 파일만 단독 분석하는 것도 물론 가능합니다.)
             
             #### 💡 시작하는 방법:
             1. 왼쪽 사이드바에서 **주관식 결과 파일(CSV 또는 Excel)**을 업로드해 주세요.
@@ -761,16 +847,16 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
     else:
         df_sub = st.session_state.df_sub
         
-        # Tabs for Steps 4~6
-        tabs_sub = st.tabs(["Step 4: 공감 맵 분석", "Step 5: 네트워크 분석", "Step 6: HMW 도출"])
+        # Tabs for Steps 5~7
+        tabs_sub = st.tabs(["Step 5: 공감 맵 분석", "Step 6: 네트워크 분석", "Step 7: HMW 도출"])
         
-        # --- Step 4: Empathy Map ---
+        # --- Step 5: Empathy Map ---
         with tabs_sub[0]:
             st.subheader("💡 AI 기반 주관식 응답 공감 맵(Empathy Map)")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 4. 공감 맵 분석 가이드</div>
+                    <div class="guide-title">💡 Step 5. 공감 맵 분석 가이드</div>
                     Gemini AI를 사용해 주관식 의견들에 포함된 고객(사용자)의 감정과 요구사항을 분류하고 요약합니다. 
                     말한 내용(Says), 내면의 생각(Thinks), 취하는 행동(Does), 복합적인 감정(Feels)의 4개 도메인으로 나뉘어 프리미엄 카드 레이아웃으로 결과를 제공합니다.
                 </div>
@@ -895,13 +981,13 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                         mime="application/json"
                     )
                     
-        # --- Step 5: Network Analysis ---
+        # --- Step 6: Network Analysis ---
         with tabs_sub[1]:
             st.subheader("🕸️ 키워드 의미망 동시출현 네트워크 분석")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 5. 네트워크 분석 가이드</div>
+                    <div class="guide-title">💡 Step 6. 네트워크 분석 가이드</div>
                     사용자들의 피드백 문장에서 핵심 단어를 끄집어낸 후, 이 단어들이 서로 어떤 연결고리를 맺고 있는지 시각화합니다.
                     마우스로 노드를 움직이거나 휠로 확대/축소하며 연관 깊이를 분석할 수 있으며, 키워드 연관성 가중치 테이블과 차트를 각각 저장할 수 있습니다.
                 </div>
@@ -1113,13 +1199,13 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                             mime="text/csv"
                         )
                         
-        # --- Step 6: HMW 도출 ---
+        # --- Step 7: HMW 도출 ---
         with tabs_sub[2]:
             st.subheader("💡 AI 기반 HMW (How Might We) 기회 및 질문 도출")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 6. HMW 도출 가이드</div>
+                    <div class="guide-title">💡 Step 7. HMW 도출 가이드</div>
                     불편 요소나 기회 요소로부터 '우리가 어떻게 하면(How Might We)...?' 형태로 발상 전환용 질문을 뽑아내는 창의적 문제 재정의 기법입니다.
                     만약 Stage 1에서 인구통계 및 만족도 척도 요약을 집계하셨다면, 정량적 만족 지표를 기반으로 한층 정합성 있는 입체적 컨텍스트가 Gemini AI에 전달됩니다.
                 </div>
