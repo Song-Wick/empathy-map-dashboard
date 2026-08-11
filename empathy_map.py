@@ -1247,8 +1247,8 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                         survey_text = build_survey_text_summary(df_sub, sub_cols)
                         
                         prompt = f"""
-                        설문조사의 주관식 답변 데이터를 분석하여, 핵심 키워드 10~15개 간의 연관 관계망(동시출현 및 주제 간 밀접성)을 추출해 주세요.
-                        단어들이 한 문단에 동시에 언급된 빈도와 의미상의 인과적 연결성을 고려하여 노드(어휘 및 출현빈도)와 연결 강도(에지 가중치)를 산출해 주세요.
+                        설문조사의 주관식 답변 데이터를 분석하여, 가장 중요하게 언급되는 핵심 키워드(명사 또는 짧은 개념어구) 10~15개를 추출해 주세요.
+                        중복되거나 의미가 유사한 어휘는 하나로 통합하여 대표 단어로 출력해 주세요.
 
                         [주관식 답변 데이터]
                         {survey_text}
@@ -1256,16 +1256,8 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                         [출력 형식]
                         반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 설명은 제외해 주세요.
                         {{
-                          "nodes": [
-                            {{"name": "시스템 오류", "freq": 12}},
-                            {{"name": "자료 다양성", "freq": 8}},
-                          ],
-                          "links": [
-                            {{"source": "시스템 오류", "target": "서비스 품질", "weight": 5}},
-                            {{"source": "자료 다양성", "target": "콘텐츠 부족", "weight": 4}},
-                          ]
+                          "keywords": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5", "키워드6", "키워드7", "키워드8", "키워드9", "키워드10", "키워드11", "키워드12"]
                         }}
-                        (참고: links의 weight는 1에서 10 사이의 연관성 강도(정수)이며, 두 키워드가 자주 함께 언급되었거나 인과관계가 밀접할수록 큰 가중치를 설정해 주세요.)
                         """
                         
                         try:
@@ -1275,20 +1267,31 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                                 config={'temperature': 0.0, 'seed': 42}
                             )
                             net_data = parse_json_from_response(response.text)
+                            keywords = [k for k in net_data.get("keywords", []) if k]
                             
-                            nodes = net_data.get("nodes", [])
-                            keywords = [n.get("name") for n in nodes if n.get("name")]
-                            freq_dict = {n.get("name"): n.get("freq", 1) for n in nodes if n.get("name")}
+                            raw_responses = []
+                            for col in sub_cols:
+                                raw_responses.extend(df_sub[col].dropna().astype(str).str.strip().tolist())
                             
+                            clean_responses = [r.lower().replace(" ", "") for r in raw_responses if r]
+                            
+                            freq_dict = {}
+                            for kw in keywords:
+                                clean_kw = kw.lower().replace(" ", "")
+                                cnt = sum(1 for r in clean_responses if clean_kw in r)
+                                freq_dict[kw] = max(cnt, 1)
+                                
                             co_matrix = pd.DataFrame(0, index=keywords, columns=keywords)
-                            
-                            for link in net_data.get("links", []):
-                                src = link.get("source")
-                                tgt = link.get("target")
-                                w = link.get("weight", 1)
-                                if src in keywords and tgt in keywords:
-                                    co_matrix.loc[src, tgt] = w
-                                    co_matrix.loc[tgt, src] = w
+                            for i in range(len(keywords)):
+                                for j in range(i + 1, len(keywords)):
+                                    kw1 = keywords[i]
+                                    kw2 = keywords[j]
+                                    clean_kw1 = kw1.lower().replace(" ", "")
+                                    clean_kw2 = kw2.lower().replace(" ", "")
+                                    
+                                    joint_cnt = sum(1 for r in clean_responses if clean_kw1 in r and clean_kw2 in r)
+                                    co_matrix.loc[kw1, kw2] = joint_cnt
+                                    co_matrix.loc[kw2, kw1] = joint_cnt
                                     
                             st.session_state.network_keywords = keywords
                             st.session_state.network_matrix = co_matrix
