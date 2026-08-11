@@ -1140,7 +1140,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                             response = client.models.generate_content(
                                 model='gemini-2.5-flash',
                                 contents=prompt,
-                                config={'temperature': 0.1}
+                                config={'temperature': 0.0, 'seed': 42}
                             )
                             empathy_dict = parse_json_from_response(response.text)
                             st.session_state.empathy_data = empathy_dict
@@ -1266,7 +1266,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                             response = client.models.generate_content(
                                 model='gemini-2.5-flash',
                                 contents=prompt,
-                                config={'temperature': 0.1}
+                                config={'temperature': 0.0, 'seed': 42}
                             )
                             net_data = parse_json_from_response(response.text)
                             
@@ -1441,7 +1441,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 7. HMW 도출 가이드</div>
+                    <div class="guide-title">💡 Step 8. HMW 도출 가이드</div>
                     불편 요소나 기회 요소로부터 '우리가 어떻게 하면(How Might We)...?' 형태로 발상 전환용 질문을 뽑아내는 창의적 문제 재정의 기법입니다.
                     만약 Stage 1에서 인구통계 및 만족도 척도 요약을 집계하셨다면, 정량적 만족 지표를 기반으로 한층 정합성 있는 입체적 컨텍스트가 Gemini AI에 전달됩니다.
                 </div>
@@ -1497,7 +1497,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                             response = client.models.generate_content(
                                 model='gemini-2.5-flash',
                                 contents=prompt,
-                                config={'temperature': 0.2}
+                                config={'temperature': 0.0, 'seed': 42}
                             )
                             hmw_dict = parse_json_from_response(response.text)
                             st.session_state.hmw_data = hmw_dict
