@@ -619,7 +619,7 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                     
                     col_d_1, col_d_2 = st.columns([1, 1])
                     with col_d_1:
-                        st.markdown(f"##### {selected_dem_col} 빈도 분포표")
+                        st.markdown(f"**{selected_dem_col} 빈도 분포표**")
                         st.dataframe(df_freq, use_container_width=True, hide_index=True)
                         
                         st.markdown("🤖 **복사 및 다운로드**")
@@ -775,7 +775,7 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         
                         col_o_1, col_o_2 = st.columns([1, 1])
                         with col_o_1:
-                            st.markdown(f"##### {selected_obj_col} 빈도 분포표")
+                            st.markdown(f"**{selected_obj_col} 빈도 분포표**")
                             st.dataframe(df_freq, use_container_width=True, hide_index=True)
                             
                             st.markdown("🤖 **복사 및 다운로드**")
@@ -977,14 +977,14 @@ if stage == "Stage 1: 객관식 데이터 분석 (정량)":
                         
                         col_tbl1, col_tbl2 = st.columns([1, 1])
                         with col_tbl1:
-                            st.markdown(f"##### 🔠 {row_var} × {col_var} 교차 빈도표 (명)")
+                            st.markdown(f"**🔠 {row_var} × {col_var} 교차 빈도표 (명)**")
                             st.dataframe(df_cross_count, use_container_width=True)
                             
                             tsv_cross_count = df_cross_count.to_csv(sep='\t', index=True)
                             st.code(tsv_cross_count, language='text')
                             
                         with col_tbl2:
-                            st.markdown(f"##### 📊 {row_var} × {col_var} 집단 내 응답 비율표 (%)")
+                            st.markdown(f"**📊 {row_var} × {col_var} 집단 내 응답 비율표 (%)**")
                             st.dataframe(df_cross_pct, use_container_width=True)
                             
                             tsv_cross_pct = df_cross_pct.to_csv(sep='\t', index=True)
