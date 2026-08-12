@@ -586,6 +586,29 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
 
 
 
+
+import time
+
+def generate_content_with_retry(client, model, contents, config, max_retries=4, initial_delay=3.0):
+    delay = initial_delay
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+            return response
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2.0
+                    continue
+            raise e
+
+
 def run_semantic_network_analysis(df: pd.DataFrame, columns: list[str], exclude_single_char: bool, custom_stopwords: set[str], client) -> dict:
     # Extract nouns for all responses using Kiwi
     raw_responses = []
@@ -641,7 +664,8 @@ def run_semantic_network_analysis(df: pd.DataFrame, columns: list[str], exclude_
     """
     
     try:
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
+            client=client,
             model='gemini-2.5-flash',
             contents=prompt,
             config={'temperature': 0.0, 'seed': 42}
@@ -1547,7 +1571,8 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                         """
                         
                         try:
-                            response = client.models.generate_content(
+                            response = generate_content_with_retry(
+                                client=client,
                                 model='gemini-2.5-flash',
                                 contents=prompt,
                                 config={'temperature': 0.0, 'seed': 42}
@@ -1556,7 +1581,11 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                             st.session_state.empathy_data = empathy_dict
                             st.success("공감 맵 분석이 완료되었습니다!")
                         except Exception as e:
-                            st.error(f"공감 맵 생성 실패: {e}")
+                            err_str = str(e).lower()
+                            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                                st.error("⚠️ **API 호출 한도가 초과되었습니다 (429 Quota Exceeded)**\n\n현재 Gemini Free Tier 키를 사용 중이시라면 분당 요청 횟수 제한이 매우 엄격하게 적용됩니다. 잠시(30초~1분) 기다리신 후 다시 시도하시거나, 유료 결제 계정의 API 키로 교체해 사용해 주세요.")
+                            else:
+                                st.error(f"공감 맵 생성 실패: {e}")
                             
                 # Show Empathy Map if exists in state
                 if "empathy_data" in st.session_state:
@@ -1790,7 +1819,8 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                         """
                         
                         try:
-                            response = client.models.generate_content(
+                            response = generate_content_with_retry(
+                                client=client,
                                 model='gemini-2.5-flash',
                                 contents=prompt,
                                 config={'temperature': 0.0, 'seed': 42}
@@ -1799,7 +1829,11 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                             st.session_state.hmw_data = hmw_dict
                             st.success("HMW 분석 및 카드 배치 완료!")
                         except Exception as e:
-                            st.error(f"HMW 질문 도출 중 에러: {e}")
+                            err_str = str(e).lower()
+                            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                                st.error("⚠️ **API 호출 한도가 초과되었습니다 (429 Quota Exceeded)**\n\n현재 Gemini Free Tier 키를 사용 중이시라면 분당 요청 횟수 제한이 매우 엄격하게 적용됩니다. 잠시(30초~1분) 기다리신 후 다시 시도하시거나, 유료 결제 계정의 API 키로 교체해 사용해 주세요.")
+                            else:
+                                st.error(f"HMW 질문 도출 중 에러: {e}")
                             
                 # Render HMW questions if exists
                 if "hmw_data" in st.session_state:
