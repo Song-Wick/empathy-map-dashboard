@@ -340,6 +340,7 @@ def parse_json_from_response(text: str) -> dict:
         raise ValueError("AI 응답을 JSON 형식으로 파싱할 수 없습니다. 응답 내용: \n" + text)
 
 def build_survey_text_summary(df: pd.DataFrame, columns: list[str]) -> str:
+    import random
     blocks = []
     for column in columns:
         responses = [
@@ -349,11 +350,16 @@ def build_survey_text_summary(df: pd.DataFrame, columns: list[str]) -> str:
         ]
         if not responses:
             continue
-        selected = responses[:MAX_RESPONSES]
+        random.seed(42)
+        if len(responses) > MAX_RESPONSES:
+            selected = random.sample(responses, MAX_RESPONSES)
+        else:
+            selected = responses
         block = [f"[문항: {column}]"]
         block.extend(f"- {resp}" for resp in selected)
         blocks.append("\n".join(block))
     return "\n\n".join(blocks)[:MAX_SURVEY_CHARS]
+
 
 def build_quantitative_summary(
     df: pd.DataFrame,
@@ -948,6 +954,103 @@ def render_network_analysis_results(res: dict, label: str, key_suffix: str = "")
         )
 
 
+def verify_evidence(evidence: str, raw_text: str) -> bool:
+    if not evidence or not isinstance(evidence, str):
+        return False
+    clean_ev = evidence.strip().replace(" ", "").lower()
+    clean_raw = raw_text.replace(" ", "").lower()
+    return clean_ev in clean_raw
+
+def build_quadrant_html(items_list: list, survey_text: str) -> str:
+    html_lines = []
+    for item in items_list:
+        if isinstance(item, dict):
+            text = item.get("text", "")
+            evidence = item.get("evidence", "")
+        else:
+            text = str(item)
+            evidence = ""
+            
+        verified = verify_evidence(evidence, survey_text) if evidence else True
+        badge_html = ""
+        if evidence and not verified:
+            badge_html = " <span style='color: #ef4444; font-size: 10px; font-weight: bold; padding: 2px 4px; background-color: #fee2e2; border-radius: 4px; border: 1px solid #fecaca; margin-left: 5px;'>⚠️ 근거 확인 필요</span>"
+            
+        evidence_html = ""
+        if evidence:
+            evidence_html = f"<div style='font-size: 11px; color: #64748b; margin-top: 2px; font-style: italic;'>관측된 응답: '{evidence}'{badge_html}</div>"
+            
+        html_lines.append(f"<li style='margin-bottom: 8px;'>{text}{evidence_html}</li>")
+    return "".join(html_lines)
+
+def build_feels_html(feels_list: list, survey_text: str) -> str:
+    html_lines = []
+    for item in feels_list:
+        if isinstance(item, dict):
+            text = item.get("text", "")
+            f_type = item.get("type", "neu")
+            evidence = item.get("evidence", "")
+        else:
+            text = str(item)
+            f_type = "neu"
+            evidence = ""
+            
+        if f_type == "pos":
+            badge = '<span class="feel-badge feel-pos">긍정</span>'
+        elif f_type == "neg":
+            badge = '<span class="feel-badge feel-neg">부정</span>'
+        else:
+            badge = '<span class="feel-badge feel-neu">중립</span>'
+            
+        verified = verify_evidence(evidence, survey_text) if evidence else True
+        badge_html = ""
+        if evidence and not verified:
+            badge_html = " <span style='color: #ef4444; font-size: 10px; font-weight: bold; padding: 2px 4px; background-color: #fee2e2; border-radius: 4px; border: 1px solid #fecaca; margin-left: 5px;'>⚠️ 근거 확인 필요</span>"
+            
+        evidence_html = ""
+        if evidence:
+            evidence_html = f"<div style='font-size: 11px; color: #64748b; margin-top: 2px; font-style: italic;'>관측된 응답: '{evidence}'{badge_html}</div>"
+            
+        html_lines.append(f"<li style='margin-bottom: 8px;'>{badge} {text}{evidence_html}</li>")
+    return "".join(html_lines)
+
+def build_raw_empathy_text(em_data: dict) -> str:
+    raw_text = "=== [공감 맵 분석 결과] ===\\n\\n"
+    
+    raw_text += "[SAYS - 말한다]\\n"
+    for item in em_data.get("says", []):
+        if isinstance(item, dict):
+            raw_text += f"- {item.get('text')} (근거: '{item.get('evidence')}')\\n"
+        else:
+            raw_text += f"- {item}\\n"
+    raw_text += "\\n"
+    
+    raw_text += "[THINKS - 생각한다]\\n"
+    for item in em_data.get("thinks", []):
+        if isinstance(item, dict):
+            raw_text += f"- {item.get('text')} (근거: '{item.get('evidence')}')\\n"
+        else:
+            raw_text += f"- {item}\\n"
+    raw_text += "\\n"
+    
+    raw_text += "[DOES - 행동한다]\\n"
+    for item in em_data.get("does", []):
+        if isinstance(item, dict):
+            raw_text += f"- {item.get('text')} (근거: '{item.get('evidence')}')\\n"
+        else:
+            raw_text += f"- {item}\\n"
+    raw_text += "\\n"
+    
+    raw_text += "[FEELS - 느낀다]\\n"
+    for item in em_data.get("feels", []):
+        if isinstance(item, dict):
+            raw_text += f"- [{item.get('type')}] {item.get('text')} (근거: '{item.get('evidence')}')\\n"
+        else:
+            raw_text += f"- {item}\\n"
+            
+    return raw_text
+
+
 # ========== [Main Dashboard Render] ==========
 client = get_gemini_client()
 
@@ -1517,6 +1620,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
         tabs_sub = st.tabs(["Step 6: 공감 맵 분석", "Step 7: 네트워크 분석", "Step 8: HMW 도출"])
         
         # --- Step 6: Empathy Map ---
+        # --- Step 6: Empathy Map ---
         with tabs_sub[0]:
             st.subheader("💡 AI 기반 주관식 응답 공감 맵(Empathy Map)")
             
@@ -1533,344 +1637,282 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
             elif client is None:
                 st.warning("공감 맵 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
             else:
-                survey_text = build_survey_text_summary(df_sub, sub_cols)
-                
-                if st.button("공감 맵 분석 실행", key="run_empathy_map"):
-                    with st.spinner("Gemini AI가 서술형 답변들을 종합하여 다각도로 감정을 맵핑하고 있습니다..."):
-                        prompt = f"""
-                        설문조사의 주관식 답변 데이터를 바탕으로, 대상 사용자의 심리를 분석하여 2x2 공감 맵(Empathy Map)을 작성해주세요.
-                        
-                        [공감 맵의 작성 규칙 및 구성]
-                        1. Says (말하는 것): 사용자가 주관식 답변에서 직접 언급하거나 표현한 핵심 의견 및 언어적 피드백
-                        2. Does (행동하는 것): 사용자가 시스템 이용이나 설문 대상 경험 중에 행한 구체적인 행동, 프로세스, 패턴 (사용자의 개인 성향을 넣지 말고 관찰 가능한 사실 위주로 작성)
-                        3. Thinks (생각하는 것): Says와 Does를 확실한 근거(기반)로 삼아 도출한 사용자의 생각, 기대 또는 가설 (예: '지금 실수하면 돈을 날릴 수도 있겠다', '이 시스템을 전적으로 신뢰하기는 어렵다')
-                        4. Feels (느끼는 것): Says와 Does를 직접적인 근거(기반)로 삼아, 사용자가 구체적으로 '어느 시점/상황에서 어떤 감정을 느끼는지' 구체적인 문장으로 도출 (예: '결제 완료 메시지가 뜰 때 불안해함', '환불/취소 조건을 미리 확인할 수 없어 답답해함')
-                        
-                        ★ 중요 규칙:
-                        - Thinks와 Feels는 단순히 '불편함', '아쉬움', '만족' 같은 단어 나열식의 감정 명사 단어 표현을 철저히 배제해주세요.
-                        - 반드시 Says와 Does의 내용에서 논리적으로 도출되는 구체적 가설/감정 문장으로 작성해야 합니다.
-                        - 각 사분면별로 최소 4개씩 도출해주세요.
-
-                        [주관식 답변 데이터]
-                        {survey_text}
-
-                        [출력 형식]
-                        반드시 다음 JSON 형식으로만 응답해주세요. 다른 부연 설명이나 마크다운 코드 펜스는 제외해주세요.
-                        {{
-                          "says": ["의견 1", "의견 2", "의견 3", "의견 4"],
-                          "thinks": ["근거가 명확한 생각/기대 1", "근거가 명확한 생각/기대 2", "근거가 명확한 생각/기대 3", "근거가 명확한 생각/기대 4"],
-                          "does": ["행동/패턴 1", "행동/패턴 2", "행동/패턴 3", "행동/패턴 4"],
-                          "feels": [
-                            {{"text": "상황에 기반한 구체적 감정 문장 1", "type": "pos"}},
-                            {{"text": "상황에 기반한 구체적 감정 문장 2", "type": "neg"}},
-                            {{"text": "상황에 기반한 구체적 감정 문장 3", "type": "neu"}},
-                            {{"text": "상황에 기반한 구체적 감정 문장 4", "type": "neg"}}
-                          ]
-                        }}
-                        (참고: feels의 type은 'pos'(긍정), 'neg'(부정), 'neu'(중립) 중 하나로 지정해주세요.)
-                        """
-                        
-                        try:
-                            response = generate_content_with_retry(
-                                client=client,
-                                model='gemini-2.5-flash',
-                                contents=prompt,
-                                config={'temperature': 0.0, 'seed': 42}
-                            )
-                            empathy_dict = parse_json_from_response(response.text)
-                            st.session_state.empathy_data = empathy_dict
-                            st.success("공감 맵 분석이 완료되었습니다!")
-                        except Exception as e:
-                            err_str = str(e).lower()
-                            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
-                                st.error("⚠️ **API 호출 한도가 초과되었습니다 (429 Quota Exceeded)**\n\n현재 Gemini Free Tier 키를 사용 중이시라면 분당 요청 횟수 제한이 매우 엄격하게 적용됩니다. 잠시(30초~1분) 기다리신 후 다시 시도하시거나, 유료 결제 계정의 API 키로 교체해 사용해 주세요.")
-                            else:
-                                st.error(f"공감 맵 생성 실패: {e}")
-                            
-                # Show Empathy Map if exists in state
-                if "empathy_data" in st.session_state:
-                    em_data = st.session_state.empathy_data
-                    
-                    # 2x2 UI Render
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        says_html = "".join([f"<li>{item}</li>" for item in em_data.get("says", [])])
-                        st.markdown(f"""
-                            <div class="quadrant says">
-                                <div class="q-header"><div class="q-dot"></div>Says (말한다)</div>
-                                <ul>{says_html}</ul>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        
-                        does_html = "".join([f"<li>{item}</li>" for item in em_data.get("does", [])])
-                        st.markdown(f"""
-                            <div class="quadrant does">
-                                <div class="q-header"><div class="q-dot"></div>Does (행동한다)</div>
-                                <ul>{does_html}</ul>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        
-                    with col2:
-                        thinks_html = "".join([f"<li>{item}</li>" for item in em_data.get("thinks", [])])
-                        st.markdown(f"""
-                            <div class="quadrant thinks">
-                                <div class="q-header"><div class="q-dot"></div>Thinks (생각한다)</div>
-                                <ul>{thinks_html}</ul>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        
-                        feels_items = []
-                        for f in em_data.get("feels", []):
-                            f_type = f.get("type", "neu")
-                            f_text = f.get("text", "")
-                            if f_type == "pos":
-                                badge = '<span class="feel-badge feel-pos">긍정</span>'
-                            elif f_type == "neg":
-                                badge = '<span class="feel-badge feel-neg">부정</span>'
-                            else:
-                                badge = '<span class="feel-badge feel-neu">중립</span>'
-                            feels_items.append(f"<li>{badge} {f_text}</li>")
-                        feels_html = "".join(feels_items)
-                        
-                        st.markdown(f"""
-                            <div class="quadrant feels">
-                                <div class="q-header"><div class="q-dot"></div>Feels (느낀다)</div>
-                                <ul>{feels_html}</ul>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        
-                    # Copy and download
-                    st.markdown("---")
-                    st.markdown("🤖 **복사 및 다운로드**")
-                    
-                    raw_empathy_text = "=== [공감 맵 분석 결과] ===\n\n"
-                    raw_empathy_text += "[SAYS - 말한다]\n" + "\n".join([f"- {i}" for i in em_data.get("says", [])]) + "\n\n"
-                    raw_empathy_text += "[THINKS - 생각한다]\n" + "\n".join([f"- {i}" for i in em_data.get("thinks", [])]) + "\n\n"
-                    raw_empathy_text += "[DOES - 행동한다]\n" + "\n".join([f"- {i}" for i in em_data.get("does", [])]) + "\n\n"
-                    raw_empathy_text += "[FEELS - 느낀다]\n" + "\n".join([f"- [{i.get('type')}] {i.get('text')}" for i in em_data.get("feels", [])])
-                    
-                    st.code(raw_empathy_text, language='text')
-                    
-                    st.download_button(
-                        label="📥 공감맵 데이터 JSON 다운로드",
-                        data=json.dumps(em_data, ensure_ascii=False, indent=2),
-                        file_name="empathy_map.json",
-                        mime="application/json"
-                    )
-                    
-        # --- Step 7: Network Analysis ---
-        # --- Step 7: Network Analysis ---
-        with tabs_sub[1]:
-            st.subheader("🕸️ 키워드 의미망 동시출현 네트워크 분석")
-            
-            st.markdown("""
-                <div class="guide-box">
-                    <div class="guide-title">💡 Step 7. 네트워크 분석 가이드</div>
-                    사용자들의 피드백 문장에서 핵심 단어를 끄집어낸 후, 이 단어들이 서로 어떤 연결고리를 맺고 있는지 시각화합니다.
-                    마우스로 노드를 움직이거나 휠로 확대/축소하며 연관 깊이를 분석할 수 있으며, 키워드 연관성 가중치 테이블과 차트를 각각 저장할 수 있습니다.
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Form filters expander
-            with st.expander("🛠️ 키워드 필터링 및 형태소 분석 설정"):
-                col_filt1, col_filt2 = st.columns(2)
-                with col_filt1:
-                    exclude_single_char = st.checkbox("1글자 명사 제외", value=True, help="분석 결과에서 '것', '수' 등 1글자 노이즈 단어를 필터링합니다.")
-                with col_filt2:
-                    custom_stopwords_input = st.text_area("추가 불용어 입력 (쉼표로 구분)", value="", help="네트워크에서 분석하고 싶지 않은 단어가 있다면 입력하세요.")
-                custom_stopwords = {s.strip() for s in custom_stopwords_input.split(",") if s.strip()}
-
-            network_mode = st.session_state.get("network_mode", "단일/통합 분석")
-            
-            if not sub_cols:
-                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
-            elif client is None:
-                st.warning("네트워크 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
-            else:
-                # Trigger Button
-                if network_mode == "비교 분석":
-                    compare_col_A = st.session_state.get("compare_col_A")
-                    compare_col_B = st.session_state.get("compare_col_B")
-                    st.info(f"비교 모드 활성화: **{compare_col_A}** vs **{compare_col_B}**")
-                    
-                    if st.button("네트워크 비교 분석 실행", key="run_network_compare"):
-                        with st.spinner("Gemini AI와 Kiwi 형태소 분석기가 두 문항의 네트워크를 독립 분석 중..."):
-                            res_A = run_semantic_network_analysis(df_sub, [compare_col_A], exclude_single_char, custom_stopwords, client)
-                            res_B = run_semantic_network_analysis(df_sub, [compare_col_B], exclude_single_char, custom_stopwords, client)
-                            
-                            st.session_state.network_result_A = res_A
-                            st.session_state.network_result_B = res_B
-                            st.session_state.compare_cols_analyzed = (compare_col_A, compare_col_B)
-                            
-                            # Backward compatible keys mapping to column A
-                            if "error" not in res_A:
-                                st.session_state.network_keywords = res_A["keywords"]
-                                st.session_state.network_matrix = res_A["co_matrix"]
-                                st.session_state.network_frequencies = res_A["freq_dict"]
-                                st.session_state.network_centrality = res_A["df_cent"]
-                                st.session_state.network_communities = res_A["communities"]
-                            
-                            st.success("비교 분석 완료!")
-                            st.rerun()
+                # 1. Step 7 result linkage
+                network_context_str = ""
+                if "network_centrality" in st.session_state:
+                    df_cent = st.session_state.network_centrality
+                    top_kws = df_cent.sort_values(by="연결정도 중심성", ascending=False).head(7)["키워드"].tolist()
+                    if top_kws:
+                        kws_joined = ", ".join(top_kws)
+                        network_context_str = f"\n[참고: 주관식 응답에서 네트워크 분석으로 도출된 핵심 키워드]\n- {kws_joined}\n\n이 키워드들과 Says/Thinks/Does/Feels 도출 내용 간의 연관성도 충분히 고려해 주세요.\n"
+                        st.success(f"📊 **Step 7 네트워크 분석 결과 연동 완료**: 상위 중심성 키워드({kws_joined})를 공감 맵 분석 시 반영합니다.")
                 else:
-                    if st.button("네트워크 분석 실행", key="run_network_single"):
-                        with st.spinner("Gemini AI와 Kiwi 형태소 분석기가 주관식 답변의 네트워크를 통합 분석 중..."):
-                            res_single = run_semantic_network_analysis(df_sub, sub_cols, exclude_single_char, custom_stopwords, client)
-                            
-                            st.session_state.network_result_single = res_single
-                            st.session_state.single_cols_analyzed = sub_cols
-                            
-                            # Backward compatible keys
-                            if "error" not in res_single:
-                                st.session_state.network_keywords = res_single["keywords"]
-                                st.session_state.network_matrix = res_single["co_matrix"]
-                                st.session_state.network_frequencies = res_single["freq_dict"]
-                                st.session_state.network_centrality = res_single["df_cent"]
-                                st.session_state.network_communities = res_single["communities"]
-                                
-                            st.success("통합 분석 완료!")
-                            st.rerun()
-
-                # Render Results
-                if network_mode == "비교 분석":
-                    if "network_result_A" in st.session_state and "network_result_B" in st.session_state:
-                        compare_layout = st.radio("비교 시각화 레이아웃 선택", ["나란히 보기 (2단 컬럼)", "탭으로 보기"], horizontal=True)
-                        res_A = st.session_state.network_result_A
-                        res_B = st.session_state.network_result_B
-                        compare_col_A = st.session_state.get("compare_col_A")
-                        compare_col_B = st.session_state.get("compare_col_B")
-                        
-                        if compare_layout == "나란히 보기 (2단 컬럼)":
-                            col_left, col_right = st.columns(2)
-                            with col_left:
-                                st.markdown(f"### 🅰️ {compare_col_A}")
-                                render_network_analysis_results(res_A, compare_col_A, "comp_A")
-                            with col_right:
-                                st.markdown(f"### 🅱️ {compare_col_B}")
-                                render_network_analysis_results(res_B, compare_col_B, "comp_B")
-                        else:
-                            comp_tabs = st.tabs([f"🅰️ {compare_col_A}", f"🅱️ {compare_col_B}"])
-                            with comp_tabs[0]:
-                                render_network_analysis_results(res_A, compare_col_A, "comp_A_tab")
-                            with comp_tabs[1]:
-                                render_network_analysis_results(res_B, compare_col_B, "comp_B_tab")
-                else:
-                    if "network_result_single" in st.session_state:
-                        res_single = st.session_state.network_result_single
-                        render_network_analysis_results(res_single, "통합 분석", "single")
-
-
-        # --- Step 7: HMW 도출 ---
-        with tabs_sub[2]:
-            st.subheader("💡 AI 기반 HMW (How Might We) 기회 및 질문 도출")
-            
-            st.markdown("""
-                <div class="guide-box">
-                    <div class="guide-title">💡 Step 8. HMW 도출 가이드</div>
-                    불편 요소나 기회 요소로부터 '우리가 어떻게 하면(How Might We)...?' 형태로 발상 전환용 질문을 뽑아내는 창의적 문제 재정의 기법입니다.
-                    만약 Stage 1에서 인구통계 및 만족도 척도 요약을 집계하셨다면, 정량적 만족 지표를 기반으로 한층 정합성 있는 입체적 컨텍스트가 Gemini AI에 전달됩니다.
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Show cross-talk status
-            quant_summary_status = st.session_state.get("quant_summary", "")
-            if quant_summary_status:
-                st.success("📊 **Stage 1 정량 분석 결과 연계 완료**: 이전 단계에서 생성한 정량 기술 통계 및 만족도 지표를 HMW 프롬프트에 자동으로 결합하여 분석합니다.")
-                with st.expander("연동된 정량 분석 요약 데이터 보기"):
-                    st.text(quant_summary_status)
-            else:
-                st.info("ℹ️ **안내**: 이전 Stage 1(정량 분석) 단계가 수행되지 않았습니다. 현재 주관식 서술형 피드백 데이터만을 바탕으로 HMW 도출을 처리합니다.")
-                quant_summary_status = "정량 정보가 생략되었습니다 (주관식 단독 분석)."
+                    st.info("💡 Step 7 네트워크 분석을 먼저 실행하면 더 정교한 공감맵을 얻을 수 있습니다.")
                 
-            if not sub_cols:
-                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
-            elif client is None:
-                st.warning("HMW 질문 생성을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
-            else:
-                if st.button("HMW 질문 생성", key="run_hmw"):
-                    with st.spinner("Gemini AI가 정량 정보와 주관식 Pain Point를 조합하여 기회 7요소를 매핑하는 중..."):
-                        survey_text = build_survey_text_summary(df_sub, sub_cols)
-                        
-                        prompt = f"""
-                        설문조사의 정량 통계 요약 및 주관식 답변을 분석하여 사용자의 핵심 Pain Point와 인사이트를 도출하고,
-                        [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 참고하여 창의적이고 해결 가능한 HMW(How Might We) 질문을 5~7개 생성해 주세요.
+                # 2. Select Segment Columns
+                sub_cat_cols = []
+                for col in df_sub.columns:
+                    try:
+                        unique_cnt = df_sub[col].dropna().nunique()
+                        if unique_cnt >= 2 and unique_cnt <= 15:
+                            sub_cat_cols.append(col)
+                    except Exception:
+                        pass
+                
+                # Layout for mode selector
+                empathy_mode = st.radio("분석 모드", ["전체 통합 공감맵", "세그먼트별 공감맵"], horizontal=True)
+                segment_col = None
+                
+                if empathy_mode == "세그먼트별 공감맵":
+                    if not sub_cat_cols:
+                        st.warning("분석 가능한 범주형 세그먼트 컬럼(고유값 2~15개)이 주관식 데이터프레임에 존재하지 않습니다.")
+                    else:
+                        segment_col = st.selectbox("세그먼트 기준 컬럼 선택", options=sub_cat_cols)
 
-                        [Stage 1 정량/인구통계 분석 요약]
-                        {quant_summary_status}
+                # 3. Execution Action
+                if empathy_mode == "전체 통합 공감맵":
+                    survey_text = build_survey_text_summary(df_sub, sub_cols)
+                    if st.button("공감 맵 분석 실행", key="run_empathy_map_total"):
+                        with st.spinner("Gemini AI가 전체 답변들을 종합하여 다각도로 감정을 맵핑하고 있습니다..."):
+                            prompt = f"""
+                            설문조사의 주관식 답변 데이터를 바탕으로, 대상 사용자의 심리를 분석하여 2x2 공감 맵(Empathy Map)을 작성해주세요.
+                            
+                            [공감 맵의 작성 규칙 및 구성]
+                            1. Says (말하는 것): 사용자가 주관식 답변에서 직접 언급하거나 표현한 핵심 의견 및 언어적 피드백
+                            2. Does (행동하는 것): 사용자가 시스템 이용이나 설문 대상 경험 중에 행한 구체적인 행동, 프로세스, 패턴 (사용자의 개인 성향을 넣지 말고 관찰 가능한 사실 위주로 작성)
+                            3. Thinks (생각하는 것): Says와 Does를 확실한 근거(기반)로 삼아 도출한 사용자의 생각, 기대 또는 가설 (예: '지금 실수하면 돈을 날릴 수도 있겠다', '이 시스템을 전적으로 신뢰하기는 어렵다')
+                            4. Feels (느끼는 것): Says와 Does를 직접적인 근거(기반)로 삼아, 사용자가 구체적으로 '어느 시점/상황에서 어떤 감정을 느끼는지' 구체적인 문장으로 도출 (예: '결제 완료 메시지가 뜰 때 불안해함', '환불/취소 조건을 미리 확인할 수 없어 답답해함')
+                            
+                            ★ 중요 규칙:
+                            - Thinks와 Feels는 단순히 '불편함', '아쉬움', '만족' 같은 단어 나열식의 감정 명사 단어 표현을 철저히 배제해주세요.
+                            - 반드시 Says와 Does의 내용에서 논리적으로 도출되는 구체적 가설/감정 문장으로 작성해야 합니다.
+                            - 각 Says/Thinks/Does/Feels 항목마다 'evidence' 필드를 추가해 주십시오. 
+                            - 'evidence'는 해당 항목을 도출하게 만든 [주관식 답변 데이터]에 실제로 존재하는 문장에서 그대로 발췌한 짧은 인용구(15자 내외)여야 합니다. 절대로 문장을 지어내거나 변형하지 말고 있는 그대로 발췌하십시오.
+                            - 각 사분면별로 최소 4개씩 도출해주세요.
+                            {network_context_str}
+                            [주관식 답변 데이터]
+                            {survey_text}
 
-                        [Stage 2 주관식 답변 데이터]
-                        {survey_text}
-
-                        {HMW_OPPORTUNITY_GUIDE}
-
-                        [출력 형식]
-                        반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 부연 설명은 제외해 주세요.
-                        {{
-                          "hmw_list": [
+                            [출력 형식]
+                            반드시 다음 JSON 형식으로만 응답해주세요. 다른 부연 설명이나 마크다운 코드 펜스는 제외해주세요.
                             {{
-                              "opportunity": "긍정적 요소 강화",
-                              "direction": "기존에 좋았던 협업 경험을 극대화하기",
-                              "question": "우리가 어떻게 하면 참가자들이 협업 과정에서 느낀 소속감을 장기적 네트워킹으로 확장할 수 있을까?",
-                              "icon": "💡"
-                            }},
-                            ...
-                          ]
-                        }}
-                        """
-                        
-                        try:
-                            response = generate_content_with_retry(
-                                client=client,
-                                model='gemini-2.5-flash',
-                                contents=prompt,
-                                config={'temperature': 0.0, 'seed': 42}
-                            )
-                            hmw_dict = parse_json_from_response(response.text)
-                            st.session_state.hmw_data = hmw_dict
-                            st.success("HMW 분석 및 카드 배치 완료!")
-                        except Exception as e:
-                            err_str = str(e).lower()
-                            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
-                                st.error("⚠️ **API 호출 한도가 초과되었습니다 (429 Quota Exceeded)**\n\n현재 Gemini Free Tier 키를 사용 중이시라면 분당 요청 횟수 제한이 매우 엄격하게 적용됩니다. 잠시(30초~1분) 기다리신 후 다시 시도하시거나, 유료 결제 계정의 API 키로 교체해 사용해 주세요.")
-                            else:
-                                st.error(f"HMW 질문 도출 중 에러: {e}")
+                              "says": [
+                                {{"text": "의견 내용 1", "evidence": "실제 원문 인용구 1"}},
+                                ...
+                              ],
+                              "thinks": [
+                                {{"text": "생각 내용 1", "evidence": "실제 원문 인용구 1"}},
+                                ...
+                              ],
+                              "does": [
+                                {{"text": "행동 내용 1", "evidence": "실제 원문 인용구 1"}},
+                                ...
+                              ],
+                              "feels": [
+                                {{"text": "상황 기반 감정 문장 1", "type": "pos", "evidence": "실제 원문 인용구 1"}},
+                                {{"text": "상황 기반 감정 문장 2", "type": "neg", "evidence": "실제 원문 인용구 2"}},
+                                ...
+                              ]
+                            }}
+                            (참고: feels의 type은 'pos'(긍정), 'neg'(부정), 'neu'(중립) 중 하나로 지정해주세요.)
+                            """
                             
-                # Render HMW questions if exists
-                if "hmw_data" in st.session_state:
-                    hmw_dict = st.session_state.hmw_data
-                    
-                    st.markdown("##### 기회 정의 7요소 기반 HMW 질문 카드")
-                    for item in hmw_dict.get("hmw_list", []):
-                        icon = item.get("icon", "💡")
-                        opp = item.get("opportunity", "")
-                        direc = item.get("direction", "")
-                        q = item.get("question", "")
+                            try:
+                                response = generate_content_with_retry(
+                                    client=client,
+                                    model='gemini-2.5-flash',
+                                    contents=prompt,
+                                    config={'temperature': 0.0, 'seed': 42}
+                                )
+                                empathy_dict = parse_json_from_response(response.text)
+                                st.session_state.empathy_data_total = empathy_dict
+                                st.success("통합 공감 맵 분석이 완료되었습니다!")
+                                st.rerun()
+                            except Exception as e:
+                                err_str = str(e).lower()
+                                if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                                    st.error("⚠️ **API 호출 한도가 초과되었습니다 (429 Quota Exceeded)**\n\n현재 Gemini Free Tier 키를 사용 중이시라면 분당 요청 횟수 제한이 매우 엄격하게 적용됩니다. 잠시(30초~1분) 기다리신 후 다시 시도하시거나, 유료 결제 계정의 API 키로 교체해 사용해 주세요.")
+                                else:
+                                    st.error(f"통합 공감 맵 생성 실패: {e}")
+                                    
+                    # Render Total Empathy Map
+                    if "empathy_data_total" in st.session_state:
+                        em_data = st.session_state.empathy_data_total
                         
-                        st.markdown(f"""
-                            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                                <div style="display: flex; align-items: center; gap: 12px;">
-                                    <span style="font-size: 24px;">{icon}</span>
-                                    <div>
-                                        <span style="font-size: 12px; color: #64748b; font-weight: bold; text-transform: uppercase;">{opp} · {direc}</span>
-                                        <p style="font-size: 15px; font-weight: 700; color: #065f46; margin: 4px 0 0 0; line-height: 1.6;">{q}</p>
-                                    </div>
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"""
+                                <div class="quadrant says">
+                                    <div class="q-header"><div class="q-dot"></div>Says (말한다)</div>
+                                    <ul>{build_quadrant_html(em_data.get("says", []), survey_text)}</ul>
                                 </div>
-                            </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
+                            
+                            st.markdown(f"""
+                                <div class="quadrant does">
+                                    <div class="q-header"><div class="q-dot"></div>Does (행동한다)</div>
+                                    <ul>{build_quadrant_html(em_data.get("does", []), survey_text)}</ul>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            
+                        with col2:
+                            st.markdown(f"""
+                                <div class="quadrant thinks">
+                                    <div class="q-header"><div class="q-dot"></div>Thinks (생각한다)</div>
+                                    <ul>{build_quadrant_html(em_data.get("thinks", []), survey_text)}</ul>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            
+                            st.markdown(f"""
+                                <div class="quadrant feels">
+                                    <div class="q-header"><div class="q-dot"></div>Feels (느낀다)</div>
+                                    <ul>{build_feels_html(em_data.get("feels", []), survey_text)}</ul>
+                                </div>
+                            """, unsafe_allow_html=True)
+                            
+                        # Download Section
+                        st.markdown("---")
+                        st.markdown("🤖 **복사 및 다운로드**")
+                        raw_empathy_text = build_raw_empathy_text(em_data)
+                        st.code(raw_empathy_text, language='text')
+                        st.download_button(
+                            label="📥 공감맵 데이터 JSON 다운로드",
+                            data=json.dumps(em_data, ensure_ascii=False, indent=2),
+                            file_name="empathy_map_total.json",
+                            mime="application/json",
+                            key="dl_empathy_total"
+                        )
+                else:
+                    # Segment Empathy Map Mode
+                    if segment_col:
+                        unique_vals = list(df_sub[segment_col].dropna().unique())
                         
-                    st.markdown("---")
-                    st.markdown("🤖 **복사 및 다운로드**")
-                    
-                    raw_hmw_text = "=== [HMW 질문 리스트] ===\n\n"
-                    for idx, item in enumerate(hmw_dict.get("hmw_list", [])):
-                        raw_hmw_text += f"{idx+1}. [{item.get('opportunity')}] {item.get('direction')}\n"
-                        raw_hmw_text += f"   Q: {item.get('question')}\n\n"
-                        
-                    st.code(raw_hmw_text, language='text')
-                    
-                    st.download_button(
-                        label="📥 HMW 질문 목록 TXT 다운로드",
-                        data=raw_hmw_text,
-                        file_name="how_might_we_questions.txt",
-                        mime="text/plain"
-                    )
+                        # Show Segment-wide run button
+                        if st.button("세그먼트별 공감맵 일괄 생성", key=f"run_empathy_map_segment_{segment_col}"):
+                            progress_bar = st.progress(0.0)
+                            status_text = st.empty()
+                            
+                            for idx, val in enumerate(unique_vals):
+                                status_text.markdown(f"**'{val}'** 세그먼트 분석 중 ({idx+1}/{len(unique_vals)})...")
+                                df_seg = df_sub[df_sub[segment_col] == val]
+                                survey_text_seg = build_survey_text_summary(df_seg, sub_cols)
+                                
+                                prompt = f"""
+                                설문조사 주관식 답변 중 '{segment_col}' 컬럼의 값이 '{val}'인 세그먼트 사용자들의 심리를 분석하여 2x2 공감 맵(Empathy Map)을 작성해주세요.
+                                
+                                [공감 맵의 작성 규칙 및 구성]
+                                1. Says (말하는 것): 사용자가 주관식 답변에서 직접 언급하거나 표현한 핵심 의견 및 언어적 피드백
+                                2. Does (행동하는 것): 사용자가 시스템 이용이나 설문 대상 경험 중에 행한 구체적인 행동, 프로세스, 패턴 (사용자의 개인 성향을 넣지 말고 관찰 가능한 사실 위주로 작성)
+                                3. Thinks (생각하는 것): Says와 Does를 확실한 근거(기반)로 삼아 도출한 사용자의 생각, 기대 또는 가설 (예: '지금 실수하면 돈을 날릴 수도 있겠다', '이 시스템을 전적으로 신뢰하기는 어렵다')
+                                4. Feels (느끼는 것): Says와 Does를 직접적인 근거(기반)로 삼아, 사용자가 구체적으로 '어느 시점/상황에서 어떤 감정을 느끼는지' 구체적인 문장으로 도출 (예: '결제 완료 메시지가 뜰 때 불안해함', '환불/취소 조건을 미리 확인할 수 없어 답답해함')
+                                
+                                ★ 중요 규칙:
+                                - Thinks와 Feels는 단순히 '불편함', '아쉬움', '만족' 같은 단어 나열식의 감정 명사 단어 표현을 철저히 배제해주세요.
+                                - 반드시 Says와 Does의 내용에서 논리적으로 도출되는 구체적 가설/감정 문장으로 작성해야 합니다.
+                                - 각 Says/Thinks/Does/Feels 항목마다 'evidence' 필드를 추가해 주십시오. 
+                                - 'evidence'는 해당 항목을 도출하게 만든 [주관식 답변 데이터]에 실제로 존재하는 문장에서 그대로 발췌한 짧은 인용구(15자 내외)여야 합니다. 절대로 문장을 지어내거나 변형하지 말고 있는 그대로 발췌하십시오.
+                                - 각 사분면별로 최소 4개씩 도출해주세요.
+                                {network_context_str}
+                                [주관식 답변 데이터 (세그먼트: {val})]
+                                {survey_text_seg}
+
+                                [출력 형식]
+                                반드시 다음 JSON 형식으로만 응답해주세요. 다른 부연 설명이나 마크다운 코드 펜스는 제외해주세요.
+                                {{
+                                  "says": [
+                                    {{"text": "의견 내용 1", "evidence": "실제 원문 인용구 1"}},
+                                    ...
+                                  ],
+                                  "thinks": [
+                                    {{"text": "생각 내용 1", "evidence": "실제 원문 인용구 1"}},
+                                    ...
+                                  ],
+                                  "does": [
+                                    {{"text": "행동 내용 1", "evidence": "실제 원문 인용구 1"}},
+                                    ...
+                                  ],
+                                  "feels": [
+                                    {{"text": "상황 기반 감정 문장 1", "type": "pos", "evidence": "실제 원문 인용구 1"}},
+                                    {{"text": "상황 기반 감정 문장 2", "type": "neg", "evidence": "실제 원문 인용구 2"}},
+                                    ...
+                                  ]
+                                }}
+                                (참고: feels의 type은 'pos'(긍정), 'neg'(부정), 'neu'(중립) 중 하나로 지정해주세요.)
+                                """
+                                
+                                try:
+                                    response = generate_content_with_retry(
+                                        client=client,
+                                        model='gemini-2.5-flash',
+                                        contents=prompt,
+                                        config={'temperature': 0.0, 'seed': 42}
+                                    )
+                                    empathy_dict = parse_json_from_response(response.text)
+                                    st.session_state[f"empathy_data_{segment_col}_{val}"] = empathy_dict
+                                except Exception as e:
+                                    st.error(f"'{val}' 세그먼트 공감 맵 생성 실패: {e}")
+                                    
+                                progress_bar.progress((idx + 1) / len(unique_vals))
+                                
+                            status_text.markdown("✨ **모든 세그먼트의 공감맵 생성이 완료되었습니다!**")
+                            st.success("세그먼트별 공감 맵 일괄 분석이 완료되었습니다!")
+                            st.rerun()
+                            
+                        # Show Tabs for each Segment
+                        segment_tabs = st.tabs([f"{val} (n={len(df_sub[df_sub[segment_col] == val])})" for val in unique_vals])
+                        for idx, val in enumerate(unique_vals):
+                            with segment_tabs[idx]:
+                                seg_key = f"empathy_data_{segment_col}_{val}"
+                                if seg_key in st.session_state:
+                                    em_data = st.session_state[seg_key]
+                                    df_seg = df_sub[df_sub[segment_col] == val]
+                                    survey_text_seg = build_survey_text_summary(df_seg, sub_cols)
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.markdown(f"""
+                                            <div class="quadrant says">
+                                                <div class="q-header"><div class="q-dot"></div>Says (말한다)</div>
+                                                <ul>{build_quadrant_html(em_data.get("says", []), survey_text_seg)}</ul>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                        st.markdown(f"""
+                                            <div class="quadrant does">
+                                                <div class="q-header"><div class="q-dot"></div>Does (행동한다)</div>
+                                                <ul>{build_quadrant_html(em_data.get("does", []), survey_text_seg)}</ul>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                    with col2:
+                                        st.markdown(f"""
+                                            <div class="quadrant thinks">
+                                                <div class="q-header"><div class="q-dot"></div>Thinks (생각한다)</div>
+                                                <ul>{build_quadrant_html(em_data.get("thinks", []), survey_text_seg)}</ul>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                        st.markdown(f"""
+                                            <div class="quadrant feels">
+                                                <div class="q-header"><div class="q-dot"></div>Feels (느낀다)</div>
+                                                <ul>{build_feels_html(em_data.get("feels", []), survey_text_seg)}</ul>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                    # Download Segment Empathy Map
+                                    st.markdown("---")
+                                    st.markdown("🤖 **복사 및 다운로드**")
+                                    raw_empathy_text = build_raw_empathy_text(em_data)
+                                    st.code(raw_empathy_text, language='text')
+                                    st.download_button(
+                                        label=f"📥 {val} 세그먼트 공감맵 데이터 JSON 다운로드",
+                                        data=json.dumps(em_data, ensure_ascii=False, indent=2),
+                                        file_name=f"empathy_map_{segment_col}_{val}.json",
+                                        mime="application/json",
+                                        key=f"dl_empathy_{segment_col}_{val}"
+                                    )
+                                else:
+                                    st.info(f"💡 '{val}' 세그먼트의 공감맵 분석 결과가 존재하지 않습니다. 상단의 '세그먼트별 공감맵 일괄 생성' 버튼을 클릭해 주세요.")
+
+
+        # --- Step 7: Network Analysis ---
