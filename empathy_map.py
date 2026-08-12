@@ -1617,16 +1617,115 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
         df_sub = st.session_state.df_sub
         
         # Tabs for Steps 6~8
-        tabs_sub = st.tabs(["Step 6: 공감 맵 분석", "Step 7: 네트워크 분석", "Step 8: HMW 도출"])
-        
-        # --- Step 6: Empathy Map ---
-        # --- Step 6: Empathy Map ---
+        tabs_sub = st.tabs(["Step 6: 네트워크 분석", "Step 7: 공감 맵 분석", "Step 8: HMW 도출"])
+
+        # --- Step 6: 네트워크 분석 ---
         with tabs_sub[0]:
+            st.subheader("🕸️ 키워드 의미망 동시출현 네트워크 분석")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 6. 네트워크 분석 가이드</div>
+                    사용자들의 피드백 문장에서 핵심 단어를 끄집어낸 후, 이 단어들이 서로 어떤 연결고리를 맺고 있는지 시각화합니다.
+                    마우스로 노드를 움직이거나 휠로 확대/축소하며 연관 깊이를 분석할 수 있으며, 키워드 연관성 가중치 테이블과 차트를 각각 저장할 수 있습니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Form filters expander
+            with st.expander("🛠️ 키워드 필터링 및 형태소 분석 설정"):
+                col_filt1, col_filt2 = st.columns(2)
+                with col_filt1:
+                    exclude_single_char = st.checkbox("1글자 명사 제외", value=True, help="분석 결과에서 '것', '수' 등 1글자 노이즈 단어를 필터링합니다.")
+                with col_filt2:
+                    custom_stopwords_input = st.text_area("추가 불용어 입력 (쉼표로 구분)", value="", help="네트워크에서 분석하고 싶지 않은 단어가 있다면 입력하세요.")
+                custom_stopwords = {s.strip() for s in custom_stopwords_input.split(",") if s.strip()}
+
+            network_mode = st.session_state.get("network_mode", "단일/통합 분석")
+            
+            if not sub_cols:
+                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
+            elif client is None:
+                st.warning("네트워크 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
+            else:
+                # Trigger Button
+                if network_mode == "비교 분석":
+                    compare_col_A = st.session_state.get("compare_col_A")
+                    compare_col_B = st.session_state.get("compare_col_B")
+                    st.info(f"비교 모드 활성화: **{compare_col_A}** vs **{compare_col_B}**")
+                    
+                    if st.button("네트워크 비교 분석 실행", key="run_network_compare"):
+                        with st.spinner("Gemini AI와 Kiwi 형태소 분석기가 두 문항의 네트워크를 독립 분석 중..."):
+                            res_A = run_semantic_network_analysis(df_sub, [compare_col_A], exclude_single_char, custom_stopwords, client)
+                            res_B = run_semantic_network_analysis(df_sub, [compare_col_B], exclude_single_char, custom_stopwords, client)
+                            
+                            st.session_state.network_result_A = res_A
+                            st.session_state.network_result_B = res_B
+                            st.session_state.compare_cols_analyzed = (compare_col_A, compare_col_B)
+                            
+                            # Backward compatible keys mapping to column A
+                            if "error" not in res_A:
+                                st.session_state.network_keywords = res_A["keywords"]
+                                st.session_state.network_matrix = res_A["co_matrix"]
+                                st.session_state.network_frequencies = res_A["freq_dict"]
+                                st.session_state.network_centrality = res_A["df_cent"]
+                                st.session_state.network_communities = res_A["communities"]
+                            
+                            st.success("비교 분석 완료!")
+                            st.rerun()
+                else:
+                    if st.button("네트워크 분석 실행", key="run_network_single"):
+                        with st.spinner("Gemini AI와 Kiwi 형태소 분석기가 주관식 답변의 네트워크를 통합 분석 중..."):
+                            res_single = run_semantic_network_analysis(df_sub, sub_cols, exclude_single_char, custom_stopwords, client)
+                            
+                            st.session_state.network_result_single = res_single
+                            st.session_state.single_cols_analyzed = sub_cols
+                            
+                            # Backward compatible keys
+                            if "error" not in res_single:
+                                st.session_state.network_keywords = res_single["keywords"]
+                                st.session_state.network_matrix = res_single["co_matrix"]
+                                st.session_state.network_frequencies = res_single["freq_dict"]
+                                st.session_state.network_centrality = res_single["df_cent"]
+                                st.session_state.network_communities = res_single["communities"]
+                                
+                            st.success("통합 분석 완료!")
+                            st.rerun()
+
+                # Render Results
+                if network_mode == "비교 분석":
+                    if "network_result_A" in st.session_state and "network_result_B" in st.session_state:
+                        compare_layout = st.radio("비교 시각화 레이아웃 선택", ["나란히 보기 (2단 컬럼)", "탭으로 보기"], horizontal=True)
+                        res_A = st.session_state.network_result_A
+                        res_B = st.session_state.network_result_B
+                        compare_col_A = st.session_state.get("compare_col_A")
+                        compare_col_B = st.session_state.get("compare_col_B")
+                        
+                        if compare_layout == "나란히 보기 (2단 컬럼)":
+                            col_left, col_right = st.columns(2)
+                            with col_left:
+                                st.markdown(f"### 🅰️ {compare_col_A}")
+                                render_network_analysis_results(res_A, compare_col_A, "comp_A")
+                            with col_right:
+                                st.markdown(f"### 🅱️ {compare_col_B}")
+                                render_network_analysis_results(res_B, compare_col_B, "comp_B")
+                        else:
+                            comp_tabs = st.tabs([f"🅰️ {compare_col_A}", f"🅱️ {compare_col_B}"])
+                            with comp_tabs[0]:
+                                render_network_analysis_results(res_A, compare_col_A, "comp_A_tab")
+                            with comp_tabs[1]:
+                                render_network_analysis_results(res_B, compare_col_B, "comp_B_tab")
+                else:
+                    if "network_result_single" in st.session_state:
+                        res_single = st.session_state.network_result_single
+                        render_network_analysis_results(res_single, "통합 분석", "single")
+
+        # --- Step 7: 공감 맵 분석 ---
+        with tabs_sub[1]:
             st.subheader("💡 AI 기반 주관식 응답 공감 맵(Empathy Map)")
             
             st.markdown("""
                 <div class="guide-box">
-                    <div class="guide-title">💡 Step 6. 공감 맵 분석 가이드</div>
+                    <div class="guide-title">💡 Step 7. 공감 맵 분석 가이드</div>
                     Gemini AI를 사용해 주관식 의견들에 포함된 고객(사용자)의 감정과 요구사항을 분류하고 요약합니다. 
                     말한 내용(Says), 내면의 생각(Thinks), 취하는 행동(Does), 복합적인 감정(Feels)의 4개 도메인으로 나뉘어 프리미엄 카드 레이아웃으로 결과를 제공합니다.
                 </div>
@@ -1637,7 +1736,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
             elif client is None:
                 st.warning("공감 맵 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
             else:
-                # 1. Step 7 result linkage
+                # 1. Step 6 result linkage
                 network_context_str = ""
                 if "network_centrality" in st.session_state:
                     df_cent = st.session_state.network_centrality
@@ -1645,9 +1744,9 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                     if top_kws:
                         kws_joined = ", ".join(top_kws)
                         network_context_str = f"\n[참고: 주관식 응답에서 네트워크 분석으로 도출된 핵심 키워드]\n- {kws_joined}\n\n이 키워드들과 Says/Thinks/Does/Feels 도출 내용 간의 연관성도 충분히 고려해 주세요.\n"
-                        st.success(f"📊 **Step 7 네트워크 분석 결과 연동 완료**: 상위 중심성 키워드({kws_joined})를 공감 맵 분석 시 반영합니다.")
+                        st.success(f"📊 **Step 6 네트워크 분석 결과 연동 완료**: 상위 중심성 키워드({kws_joined})를 공감 맵 분석 시 반영합니다.")
                 else:
-                    st.info("💡 Step 7 네트워크 분석을 먼저 실행하면 더 정교한 공감맵을 얻을 수 있습니다.")
+                    st.info("💡 Step 6 네트워크 분석을 먼저 실행하면 더 정교한 공감맵을 얻을 수 있습니다.")
                 
                 # 2. Select Segment Columns
                 sub_cat_cols = []
@@ -1914,5 +2013,117 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                                 else:
                                     st.info(f"💡 '{val}' 세그먼트의 공감맵 분석 결과가 존재하지 않습니다. 상단의 '세그먼트별 공감맵 일괄 생성' 버튼을 클릭해 주세요.")
 
+        # --- Step 8: HMW 도출 ---
+        with tabs_sub[2]:
+            st.subheader("💡 AI 기반 HMW (How Might We) 기회 및 질문 도출")
+            
+            st.markdown("""
+                <div class="guide-box">
+                    <div class="guide-title">💡 Step 8. HMW 도출 가이드</div>
+                    불편 요소나 기회 요소로부터 '우리가 어떻게 하면(How Might We)...?' 형태로 발상 전환용 질문을 뽑아내는 창의적 문제 재정의 기법입니다.
+                    만약 Stage 1에서 인구통계 및 만족도 척도 요약을 집계하셨다면, 정량적 만족 지표를 기반으로 한층 정합성 있는 입체적 컨텍스트가 Gemini AI에 전달됩니다.
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Show cross-talk status
+            quant_summary_status = st.session_state.get("quant_summary", "")
+            if quant_summary_status:
+                st.success("📊 **Stage 1 정량 분석 결과 연계 완료**: 이전 단계에서 생성한 정량 기술 통계 및 만족도 지표를 HMW 프롬프트에 자동으로 결합하여 분석합니다.")
+                with st.expander("연동된 정량 분석 요약 데이터 보기"):
+                    st.text(quant_summary_status)
+            else:
+                st.info("ℹ️ **안내**: 이전 Stage 1(정량 분석) 단계가 수행되지 않았습니다. 현재 주관식 서술형 피드백 데이터만을 바탕으로 HMW 도출을 처리합니다.")
+                quant_summary_status = "정량 정보가 생략되었습니다 (주관식 단독 분석)."
+                
+            if not sub_cols:
+                st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
+            elif client is None:
+                st.warning("HMW 질문 생성을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
+            else:
+                if st.button("HMW 질문 생성", key="run_hmw"):
+                    with st.spinner("Gemini AI가 정량 정보와 주관식 Pain Point를 조합하여 기회 7요소를 매핑하는 중..."):
+                        survey_text = build_survey_text_summary(df_sub, sub_cols)
+                        
+                        prompt = f"""
+                        설문조사의 정량 통계 요약 및 주관식 답변을 분석하여 사용자의 핵심 Pain Point와 인사이트를 도출하고,
+                        [문제의 기회 요소 발견 7요소 기반 HMW 가이드]를 참고하여 창의적이고 해결 가능한 HMW(How Might We) 질문을 5~7개 생성해 주세요.
 
-        # --- Step 7: Network Analysis ---
+                        [Stage 1 정량/인구통계 분석 요약]
+                        {quant_summary_status}
+
+                        [Stage 2 주관식 답변 데이터]
+                        {survey_text}
+
+                        {HMW_OPPORTUNITY_GUIDE}
+
+                        [출력 형식]
+                        반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 부연 설명은 제외해 주세요.
+                        {{
+                          "hmw_list": [
+                            {{
+                              "opportunity": "긍정적 요소 강화",
+                              "direction": "기존에 좋았던 협업 경험을 극대화하기",
+                              "question": "우리가 어떻게 하면 참가자들이 협업 과정에서 느낀 소속감을 장기적 네트워킹으로 확장할 수 있을까?",
+                              "icon": "💡"
+                            }},
+                            ...
+                          ]
+                        }}
+                        """
+                        
+                        try:
+                            response = generate_content_with_retry(
+                                client=client,
+                                model='gemini-2.5-flash',
+                                contents=prompt,
+                                config={'temperature': 0.0, 'seed': 42}
+                            )
+                            hmw_dict = parse_json_from_response(response.text)
+                            st.session_state.hmw_data = hmw_dict
+                            st.success("HMW 분석 및 카드 배치 완료!")
+                        except Exception as e:
+                            err_str = str(e).lower()
+                            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                                st.error("⚠️ **API 호출 한도가 초과되었습니다 (429 Quota Exceeded)**\n\n현재 Gemini Free Tier 키를 사용 중이시라면 분당 요청 횟수 제한이 매우 엄격하게 적용됩니다. 잠시(30초~1분) 기다리신 후 다시 시도하시거나, 유료 결제 계정의 API 키로 교체해 사용해 주세요.")
+                            else:
+                                st.error(f"HMW 질문 도출 중 에러: {e}")
+                                
+                # Render HMW questions if exists
+                if "hmw_data" in st.session_state:
+                    hmw_dict = st.session_state.hmw_data
+                    
+                    st.markdown("##### 기회 정의 7요소 기반 HMW 질문 카드")
+                    for item in hmw_dict.get("hmw_list", []):
+                        icon = item.get("icon", "💡")
+                        opp = item.get("opportunity", "")
+                        direc = item.get("direction", "")
+                        q = item.get("question", "")
+                        
+                        st.markdown(f"""
+                            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <span style="font-size: 24px;">{icon}</span>
+                                    <div>
+                                        <span style="font-size: 12px; color: #64748b; font-weight: bold; text-transform: uppercase;">{opp} · {direc}</span>
+                                        <p style="font-size: 15px; font-weight: 700; color: #065f46; margin: 4px 0 0 0; line-height: 1.6;">{q}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                    st.markdown("---")
+                    st.markdown("🤖 **복사 및 다운로드**")
+                    
+                    raw_hmw_text = "=== [HMW 질문 리스트] ===\n\n"
+                    for idx, item in enumerate(hmw_dict.get("hmw_list", [])):
+                        raw_hmw_text += f"{idx+1}. [{item.get('opportunity')}] {item.get('direction')}\n"
+                        raw_hmw_text += f"   Q: {item.get('question')}\n\n"
+                        
+                    st.code(raw_hmw_text, language='text')
+                    
+                    st.download_button(
+                        label="📥 HMW 질문 목록 TXT 다운로드",
+                        data=raw_hmw_text,
+                        file_name="how_might_we_questions.txt",
+                        mime="text/plain"
+                    )
