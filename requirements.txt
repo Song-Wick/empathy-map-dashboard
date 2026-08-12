@@ -4,3 +4,4 @@ networkx
 matplotlib
 google-genai
 openpyxl
+kiwipiepy

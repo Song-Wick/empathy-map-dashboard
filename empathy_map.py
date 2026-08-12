@@ -4,11 +4,13 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
+from networkx.algorithms.community import greedy_modularity_communities
 import matplotlib.pyplot as plt
 import io
 import json
 import re
 from google import genai
+from kiwipiepy import Kiwi
 
 # Enable Matplotlib in non-GUI background
 plt.switch_backend('Agg')
@@ -27,6 +29,41 @@ plt.rcParams['axes.unicode_minus'] = False
 # ========== [Settings & Consts] ==========
 MAX_RESPONSES = 300
 MAX_SURVEY_CHARS = 24000
+
+# Default Korean stopwords list for network analysis
+STOPWORDS = {
+    '것', '수', '등', '및', '데', '이', '그', '저', '적', '때', '바', '의', '에', '을', '를', '은', '는', '이', '가', 
+    '저희', '우리', '너희', '당신', '대해', '대해서', '통해', '통해서', '위해', '위해서', '때문', '때문에', '정도', '이후',
+    '관련', '경우', '대한', '대해서', '통한', '분석', '의견', '답변', '설문', '결과', '내용', '부분', '사항', '사람', '이용',
+    '사용', '생각', '의사', '작성', '도출', '단계', '설정', '기준', '분포', '비율', '빈도', '만족', '만족도', '프로그램',
+    '이번', '통해', '통하여', '통해서', '매우', '진짜', '진짜로', '정말', '정말로', '가장', '제일', '매우', '아주', '조금', '약간',
+    '그것', '이것', '저것', '에서', '부터', '까지', '으로', '로써', '로서', '하고', '그리고', '하지만', '그런데', '그래서'
+}
+
+# Cached Kiwi morphological analyzer
+@st.cache_resource
+def get_kiwi():
+    return Kiwi()
+
+def extract_nouns_kiwi(text: str, exclude_single_char: bool = True, custom_stopwords: set[str] = set()) -> list[str]:
+    if not isinstance(text, str) or not text.strip():
+        return []
+    kiwi = get_kiwi()
+    nouns = []
+    try:
+        tokens = kiwi.tokenize(text)
+        for t in tokens:
+            if t.tag in ('NNG', 'NNP'):  # General and Proper Nouns
+                noun = t.form.strip()
+                if exclude_single_char and len(noun) <= 1:
+                    continue
+                if noun in STOPWORDS or noun in custom_stopwords:
+                    continue
+                nouns.append(noun)
+    except Exception:
+        pass
+    return nouns
+
 
 HMW_OPPORTUNITY_GUIDE = """
 [문제의 기회 요소 발견 7요소 기반 HMW 가이드]
@@ -519,6 +556,374 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
             options=all_sub_columns,
             default=sub_default
         )
+        
+        if len(sub_cols) >= 2:
+            st.sidebar.markdown("##### 🔀 네트워크 분석 모드")
+            net_mode = st.sidebar.radio(
+                "분석 모드 선택",
+                ["단일/통합 분석", "비교 분석"],
+                index=0,
+                help="단일/통합 분석은 선택한 주관식 열들을 통합하여 하나의 네트워크로 그립니다. 비교 분석은 두 문항의 차이를 나란히 비교합니다."
+            )
+            if net_mode == "비교 분석":
+                compare_col_A = st.sidebar.selectbox(
+                    "기준 문항 A 선택",
+                    options=sub_cols,
+                    index=0
+                )
+                compare_col_B = st.sidebar.selectbox(
+                    "비교 문항 B 선택",
+                    options=sub_cols,
+                    index=min(1, len(sub_cols)-1)
+                )
+                st.session_state.network_mode = "비교 분석"
+                st.session_state.compare_col_A = compare_col_A
+                st.session_state.compare_col_B = compare_col_B
+            else:
+                st.session_state.network_mode = "단일/통합 분석"
+        else:
+            st.session_state.network_mode = "단일/통합 분석"
+
+
+
+def run_semantic_network_analysis(df: pd.DataFrame, columns: list[str], exclude_single_char: bool, custom_stopwords: set[str], client) -> dict:
+    # Extract nouns for all responses using Kiwi
+    raw_responses = []
+    for col in columns:
+        raw_responses.extend(df[col].dropna().astype(str).str.strip().tolist())
+    
+    # Kiwi tokenize responses
+    extracted_docs = []
+    all_nouns = {}
+    for resp in raw_responses:
+        doc_nouns = extract_nouns_kiwi(resp, exclude_single_char, custom_stopwords)
+        if doc_nouns:
+            extracted_docs.append(doc_nouns)
+            for n in doc_nouns:
+                all_nouns[n] = all_nouns.get(n, 0) + 1
+                
+    if not all_nouns:
+        return {"error": "추출된 유효 명사가 없습니다. 불용어 설정을 확인해 주세요."}
+        
+    # Sort nouns by frequency
+    sorted_nouns = sorted(all_nouns.items(), key=lambda x: x[1], reverse=True)
+    # Take top 40 nouns to send to Gemini for grouping/standardizing
+    top_nouns = sorted_nouns[:40]
+    nouns_freq_list_str = "\n".join([f"- {n}: {freq}회" for n, freq in top_nouns])
+    
+    prompt = f"""
+    설문조사 주관식 응답 데이터에서 추출된 주요 명사 리스트와 각 명사의 빈도입니다.
+    이 명사들을 분석하여, 설문 피드백을 대표하는 핵심 개념 키워드(표준 키워드)를 10~15개 도출하고, 
+    유사한 단어나 어형 변화어(동의어, 유의어 등)를 표준 키워드에 매핑해 주세요.
+    
+    [추출된 명사 빈도 리스트]
+    {nouns_freq_list_str}
+    
+    [작성 규칙]
+    - 'standard'는 명사 리스트를 종합하는 가장 대표적인 핵심 단어(명사 또는 짧은 개념어구)로 정해주십시오.
+    - 'alternatives'는 명사 리스트 중 'standard'와 의미가 같거나 매우 유사하여 통합하여 처리해야 할 유사 단어들의 리스트입니다.
+    - 대표 키워드는 최대 15개까지만 도출해 주십시오.
+
+    [출력 형식]
+    반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 부연 설명은 제외해 주세요.
+    {{
+      "mappings": [
+        {{
+          "standard": "자료 부족",
+          "alternatives": ["콘텐츠", "자료", "부족", "정보"]
+        }},
+        {{
+          "standard": "시스템 오류",
+          "alternatives": ["오류", "에러", "작동", "서버"]
+        }}
+      ]
+    }}
+    """
+    
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config={'temperature': 0.0, 'seed': 42}
+        )
+        mappings_data = parse_json_from_response(response.text)
+    except Exception as e:
+        return {"error": f"Gemini API 호출 및 응답 파싱 중 오류 발생: {e}"}
+        
+    mappings = mappings_data.get("mappings", [])
+    if not mappings:
+        return {"error": "Gemini로부터 유효한 키워드 매핑 테이블을 생성하지 못했습니다."}
+        
+    # Standard keywords
+    keywords = [m.get("standard") for m in mappings if m.get("standard")]
+    # Map from alternative/standard to standardized term
+    synonym_map = {}
+    for m in mappings:
+        std = m.get("standard")
+        if not std:
+            continue
+        synonym_map[std.lower().replace(" ", "")] = std
+        for alt in m.get("alternatives", []):
+            synonym_map[alt.lower().replace(" ", "")] = std
+            
+    # Calculate response-level co-occurrence matrix and frequencies
+    doc_resolved_keywords = []
+    freq_dict = {k: 0 for k in keywords}
+    
+    for doc in extracted_docs:
+        matched_standards = set()
+        for noun in doc:
+            clean_noun = noun.lower().replace(" ", "")
+            if clean_noun in synonym_map:
+                matched_standards.add(synonym_map[clean_noun])
+        if matched_standards:
+            doc_resolved_keywords.append(list(matched_standards))
+            for k in matched_standards:
+                freq_dict[k] += 1
+                
+    # Safeguard frequencies
+    for k in keywords:
+        freq_dict[k] = max(freq_dict.get(k, 0), 1)
+        
+    # Co-occurrence count matrix
+    co_matrix = pd.DataFrame(0, index=keywords, columns=keywords)
+    for doc_kws in doc_resolved_keywords:
+        for i in range(len(doc_kws)):
+            for j in range(i + 1, len(doc_kws)):
+                k1 = doc_kws[i]
+                k2 = doc_kws[j]
+                if k1 in co_matrix.index and k2 in co_matrix.columns:
+                    co_matrix.loc[k1, k2] += 1
+                    co_matrix.loc[k2, k1] += 1
+                    
+    # Build NetworkX Graph
+    G = nx.Graph()
+    for k in keywords:
+        G.add_node(k, size=freq_dict.get(k, 1))
+        
+    for i in range(len(keywords)):
+        for j in range(i + 1, len(keywords)):
+            w = co_matrix.iloc[i, j]
+            if w > 0:
+                G.add_edge(keywords[i], keywords[j], weight=w)
+                
+    # Calculate Centralities
+    degree_cent = nx.degree_centrality(G)
+    betweenness_cent = nx.betweenness_centrality(G)
+    closeness_cent = nx.closeness_centrality(G)
+    
+    df_cent = pd.DataFrame({
+        '키워드': keywords,
+        '연결정도 중심성': [round(degree_cent.get(k, 0.0), 3) for k in keywords],
+        '매개 중심성': [round(betweenness_cent.get(k, 0.0), 3) for k in keywords],
+        '근접 중심성': [round(closeness_cent.get(k, 0.0), 3) for k in keywords]
+    })
+    
+    # Calculate Modularity Communities
+    communities_list = []
+    if len(G.edges) > 0:
+        try:
+            communities_list = list(greedy_modularity_communities(G))
+        except Exception:
+            pass
+            
+    # Assign community indices
+    node_community_dict = {}
+    if communities_list:
+        for comm_idx, comm in enumerate(communities_list):
+            for node in comm:
+                node_community_dict[node] = comm_idx
+    else:
+        for node in G.nodes:
+            node_community_dict[node] = 0
+            
+    return {
+        "keywords": keywords,
+        "co_matrix": co_matrix,
+        "freq_dict": freq_dict,
+        "df_cent": df_cent,
+        "communities": node_community_dict,
+        "G": G
+    }
+
+def render_network_analysis_results(res: dict, label: str, key_suffix: str = ""):
+    if "error" in res:
+        st.error(res["error"])
+        return
+        
+    keywords = res["keywords"]
+    co_matrix = res["co_matrix"]
+    freq_dict = res["freq_dict"]
+    df_cent = res["df_cent"]
+    node_community_dict = res["communities"]
+    G = res["G"]
+    
+    has_edges = (co_matrix.values.sum() > 0)
+    if not has_edges:
+        pos = {node: np.array([np.cos(2*np.pi*i/len(keywords)), np.sin(2*np.pi*i/len(keywords))]) for i, node in enumerate(keywords)}
+    else:
+        pos = nx.spring_layout(G, k=0.6, iterations=50, seed=42)
+        
+    # Draw Plotly Figure
+    fig_net = go.Figure()
+    
+    # Draw Edges
+    for edge in G.edges(data=True):
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        w = edge[2].get('weight', 1)
+        width = min(1 + w * 0.8, 6.0)
+        edge_trace = go.Scatter(
+            x=[x0, x1, None], y=[y0, y1, None],
+            line=dict(width=width, color='rgba(148, 163, 184, 0.3)'),
+            hoverinfo='none',
+            mode='lines',
+            showlegend=False
+        )
+        fig_net.add_trace(edge_trace)
+        
+    # Draw Nodes grouped by Modularity Communities
+    unique_comms = sorted(list(set(node_community_dict.values())))
+    colors_palette = px.colors.qualitative.Safe
+    
+    for c_idx in unique_comms:
+        c_nodes = [node for node, c in node_community_dict.items() if c == c_idx]
+        if not c_nodes:
+            continue
+            
+        node_x = []
+        node_y = []
+        node_text = []
+        node_size = []
+        
+        for node in c_nodes:
+            x, y = pos[node]
+            node_x.append(x)
+            node_y.append(y)
+            node_text.append(f"<b>{node}</b><br>출현빈도: {freq_dict.get(node, 0)}회<br>연결도: {G.degree(node)}")
+            node_size.append(min(15 + freq_dict.get(node, 1) * 2, 45))
+            
+        sorted_c_nodes = sorted(c_nodes, key=lambda x: freq_dict.get(x, 0), reverse=True)
+        repr_kws = ", ".join(sorted_c_nodes[:3])
+        trace_name = f"군집 {c_idx+1} ({repr_kws})"
+        node_color = colors_palette[c_idx % len(colors_palette)]
+        
+        node_trace = go.Scatter(
+            x=node_x, y=node_y,
+            mode='markers+text',
+            hoverinfo='text',
+            name=trace_name,
+            text=c_nodes,
+            textposition="top center",
+            hovertext=node_text,
+            textfont=dict(size=11, color='#0f172a', family="Noto Sans KR"),
+            marker=dict(
+                showscale=False,
+                color=node_color,
+                size=node_size,
+                line=dict(width=1.5, color='#ffffff')
+            )
+        )
+        fig_net.add_trace(node_trace)
+        
+    fig_net.update_layout(
+        title=f"어휘 의미망 네트워크 ({label})",
+        titlefont_size=14,
+        showlegend=True,
+        legend=dict(
+            title=dict(text="어휘 군집 및 대표 키워드"),
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        hovermode='closest',
+        margin=dict(b=20, l=5, r=5, t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        plot_bgcolor='rgba(248, 250, 252, 0.4)',
+        paper_bgcolor='white',
+        height=550
+    )
+    
+    col_n1, col_n2 = st.columns([2, 1])
+    with col_n1:
+        st.markdown(f"##### 의미망 네트워크 연관 관계 지도 - {label}")
+        st.plotly_chart(fig_net, use_container_width=True, key=f"plotly_chart_{key_suffix}")
+        st.caption("💡 노드를 클릭하고 잡아당기거나, 마우스 휠로 확대 및 스크롤할 수 있습니다.")
+        
+        st.markdown("##### 🔑 키워드 중심성 지표 분석")
+        df_cent_sorted = df_cent.sort_values(by="연결정도 중심성", ascending=False)
+        
+        def highlight_top5(row):
+            if row.name in df_cent_sorted.index[:5]:
+                return ['background-color: rgba(254, 240, 138, 0.5); font-weight: bold'] * len(row)
+            return [''] * len(row)
+            
+        st.dataframe(df_cent_sorted.style.apply(highlight_top5, axis=1), use_container_width=True, hide_index=True)
+        st.caption("💡 연결정도 중심성이 높은 상위 5개 핵심 키워드가 노란색으로 강조되어 표시됩니다.")
+        
+    with col_n2:
+        st.markdown("##### 키워드 동시출현 원형 빈도수 매트릭스")
+        st.dataframe(co_matrix, use_container_width=True)
+        
+        st.markdown("🤖 **복사 및 다운로드**")
+        
+        html_buffer = io.StringIO()
+        fig_net.write_html(html_buffer, include_plotlyjs='cdn')
+        html_bytes = html_buffer.getvalue().encode('utf-8')
+        
+        st.download_button(
+            label="🌐 인터랙티브 그래프 HTML 다운로드",
+            data=html_bytes,
+            file_name=f"keyword_network_{key_suffix}.html",
+            mime="text/html",
+            key=f"dl_html_{key_suffix}"
+        )
+        
+        try:
+            fig_plt, ax = plt.subplots(figsize=(6, 5))
+            node_colors_plt = [colors_palette[node_community_dict[n] % len(colors_palette)] for n in G.nodes()]
+            nx.draw_networkx_nodes(G, pos, ax=ax, node_size=[freq_dict.get(n, 1)*50 + 200 for n in G.nodes()], node_color=node_colors_plt)
+            nx.draw_networkx_edges(G, pos, ax=ax, width=[G[u][v]['weight']*0.8 for u,v in G.edges()], edge_color='gray', alpha=0.5)
+            nx.draw_networkx_labels(G, pos, ax=ax, font_family='Malgun Gothic', font_size=10, font_weight='bold')
+            ax.axis('off')
+            plt.tight_layout()
+            
+            img_buf = io.BytesIO()
+            plt.savefig(img_buf, format='png', dpi=150)
+            img_buf.seek(0)
+            plt.close()
+            
+            st.download_button(
+                label="🖼️ 네트워크 그래프 PNG 다운로드",
+                data=img_buf,
+                file_name=f"keyword_network_{key_suffix}.png",
+                mime="image/png",
+                key=f"dl_png_{key_suffix}"
+            )
+        except Exception as e:
+            st.caption(f"PNG 이미지 생성 대기 지연: {e}")
+            
+        csv_matrix = co_matrix.to_csv(index=True).encode('utf-8-sig')
+        st.download_button(
+            label="📥 매트릭스 데이터 CSV 다운로드",
+            data=csv_matrix,
+            file_name=f"co_occurrence_matrix_{key_suffix}.csv",
+            mime="text/csv",
+            key=f"dl_matrix_csv_{key_suffix}"
+        )
+        
+        csv_cent = df_cent.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 중심성 지표 CSV 다운로드",
+            data=csv_cent,
+            file_name=f"keyword_centrality_{key_suffix}.csv",
+            mime="text/csv",
+            key=f"dl_cent_csv_{key_suffix}"
+        )
+
 
 # ========== [Main Dashboard Render] ==========
 client = get_gemini_client()
@@ -1226,6 +1631,7 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                     )
                     
         # --- Step 7: Network Analysis ---
+        # --- Step 7: Network Analysis ---
         with tabs_sub[1]:
             st.subheader("🕸️ 키워드 의미망 동시출현 네트워크 분석")
             
@@ -1237,213 +1643,95 @@ elif stage == "Stage 2: 주관식 데이터 분석 (정성)":
                 </div>
             """, unsafe_allow_html=True)
             
+            # Form filters expander
+            with st.expander("🛠️ 키워드 필터링 및 형태소 분석 설정"):
+                col_filt1, col_filt2 = st.columns(2)
+                with col_filt1:
+                    exclude_single_char = st.checkbox("1글자 명사 제외", value=True, help="분석 결과에서 '것', '수' 등 1글자 노이즈 단어를 필터링합니다.")
+                with col_filt2:
+                    custom_stopwords_input = st.text_area("추가 불용어 입력 (쉼표로 구분)", value="", help="네트워크에서 분석하고 싶지 않은 단어가 있다면 입력하세요.")
+                custom_stopwords = {s.strip() for s in custom_stopwords_input.split(",") if s.strip()}
+
+            network_mode = st.session_state.get("network_mode", "단일/통합 분석")
+            
             if not sub_cols:
                 st.warning("사이드바에서 분석할 '주관식 서술형 열'을 1개 이상 선택해 주세요.")
             elif client is None:
                 st.warning("네트워크 분석을 활성화하려면 왼쪽 사이드바에 **Gemini API Key**를 설정해 주세요.")
             else:
-                if st.button("네트워크 분석 실행", key="run_network"):
-                    with st.spinner("Gemini AI가 서술형 답변의 어휘망 연결 밀도와 인과관계를 매핑하고 있습니다..."):
-                        survey_text = build_survey_text_summary(df_sub, sub_cols)
-                        
-                        prompt = f"""
-                        설문조사의 주관식 답변 데이터를 분석하여, 가장 중요하게 언급되는 핵심 키워드(명사 또는 짧은 개념어구) 10~15개를 추출해 주세요.
-                        중복되거나 의미가 유사한 어휘는 하나로 통합하여 대표 단어로 출력해 주세요.
-
-                        [주관식 답변 데이터]
-                        {survey_text}
-
-                        [출력 형식]
-                        반드시 다음 JSON 형식으로만 응답해 주세요. 다른 마크다운 펜스나 설명은 제외해 주세요.
-                        {{
-                          "keywords": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5", "키워드6", "키워드7", "키워드8", "키워드9", "키워드10", "키워드11", "키워드12"]
-                        }}
-                        """
-                        
-                        try:
-                            response = client.models.generate_content(
-                                model='gemini-2.5-flash',
-                                contents=prompt,
-                                config={'temperature': 0.0, 'seed': 42}
-                            )
-                            net_data = parse_json_from_response(response.text)
-                            keywords = [k for k in net_data.get("keywords", []) if k]
+                # Trigger Button
+                if network_mode == "비교 분석":
+                    compare_col_A = st.session_state.get("compare_col_A")
+                    compare_col_B = st.session_state.get("compare_col_B")
+                    st.info(f"비교 모드 활성화: **{compare_col_A}** vs **{compare_col_B}**")
+                    
+                    if st.button("네트워크 비교 분석 실행", key="run_network_compare"):
+                        with st.spinner("Gemini AI와 Kiwi 형태소 분석기가 두 문항의 네트워크를 독립 분석 중..."):
+                            res_A = run_semantic_network_analysis(df_sub, [compare_col_A], exclude_single_char, custom_stopwords, client)
+                            res_B = run_semantic_network_analysis(df_sub, [compare_col_B], exclude_single_char, custom_stopwords, client)
                             
-                            raw_responses = []
-                            for col in sub_cols:
-                                raw_responses.extend(df_sub[col].dropna().astype(str).str.strip().tolist())
+                            st.session_state.network_result_A = res_A
+                            st.session_state.network_result_B = res_B
+                            st.session_state.compare_cols_analyzed = (compare_col_A, compare_col_B)
                             
-                            clean_responses = [r.lower().replace(" ", "") for r in raw_responses if r]
+                            # Backward compatible keys mapping to column A
+                            if "error" not in res_A:
+                                st.session_state.network_keywords = res_A["keywords"]
+                                st.session_state.network_matrix = res_A["co_matrix"]
+                                st.session_state.network_frequencies = res_A["freq_dict"]
+                                st.session_state.network_centrality = res_A["df_cent"]
+                                st.session_state.network_communities = res_A["communities"]
                             
-                            freq_dict = {}
-                            for kw in keywords:
-                                clean_kw = kw.lower().replace(" ", "")
-                                cnt = sum(1 for r in clean_responses if clean_kw in r)
-                                freq_dict[kw] = max(cnt, 1)
+                            st.success("비교 분석 완료!")
+                            st.rerun()
+                else:
+                    if st.button("네트워크 분석 실행", key="run_network_single"):
+                        with st.spinner("Gemini AI와 Kiwi 형태소 분석기가 주관식 답변의 네트워크를 통합 분석 중..."):
+                            res_single = run_semantic_network_analysis(df_sub, sub_cols, exclude_single_char, custom_stopwords, client)
+                            
+                            st.session_state.network_result_single = res_single
+                            st.session_state.single_cols_analyzed = sub_cols
+                            
+                            # Backward compatible keys
+                            if "error" not in res_single:
+                                st.session_state.network_keywords = res_single["keywords"]
+                                st.session_state.network_matrix = res_single["co_matrix"]
+                                st.session_state.network_frequencies = res_single["freq_dict"]
+                                st.session_state.network_centrality = res_single["df_cent"]
+                                st.session_state.network_communities = res_single["communities"]
                                 
-                            co_matrix = pd.DataFrame(0, index=keywords, columns=keywords)
-                            for i in range(len(keywords)):
-                                for j in range(i + 1, len(keywords)):
-                                    kw1 = keywords[i]
-                                    kw2 = keywords[j]
-                                    clean_kw1 = kw1.lower().replace(" ", "")
-                                    clean_kw2 = kw2.lower().replace(" ", "")
-                                    
-                                    joint_cnt = sum(1 for r in clean_responses if clean_kw1 in r and clean_kw2 in r)
-                                    co_matrix.loc[kw1, kw2] = joint_cnt
-                                    co_matrix.loc[kw2, kw1] = joint_cnt
-                                    
-                            st.session_state.network_keywords = keywords
-                            st.session_state.network_matrix = co_matrix
-                            st.session_state.network_frequencies = freq_dict
-                            st.success("네트워크 분석 완료!")
-                        except Exception as e:
-                            st.error(f"네트워크 분석 중 오류 발생: {e}")
-                            
-                # Draw network if exists
-                if "network_matrix" in st.session_state:
-                    keywords = st.session_state.network_keywords
-                    co_matrix = st.session_state.network_matrix
-                    freq_dict = st.session_state.network_frequencies
-                    
-                    has_edges = (co_matrix.values.sum() > 0)
-                    G = nx.Graph()
-                    for kw in keywords:
-                        G.add_node(kw, size=freq_dict.get(kw, 1))
-                    for i in range(len(keywords)):
-                        for j in range(i + 1, len(keywords)):
-                            w = co_matrix.iloc[i, j]
-                            if w > 0:
-                                G.add_edge(keywords[i], keywords[j], weight=w)
-                                
-                    if not has_edges:
-                        pos = {node: np.array([np.cos(2*np.pi*i/len(keywords)), np.sin(2*np.pi*i/len(keywords))]) for i, node in enumerate(keywords)}
-                    else:
-                        pos = nx.spring_layout(G, k=0.6, iterations=50, seed=42)
+                            st.success("통합 분석 완료!")
+                            st.rerun()
+
+                # Render Results
+                if network_mode == "비교 분석":
+                    if "network_result_A" in st.session_state and "network_result_B" in st.session_state:
+                        compare_layout = st.radio("비교 시각화 레이아웃 선택", ["나란히 보기 (2단 컬럼)", "탭으로 보기"], horizontal=True)
+                        res_A = st.session_state.network_result_A
+                        res_B = st.session_state.network_result_B
+                        compare_col_A = st.session_state.get("compare_col_A")
+                        compare_col_B = st.session_state.get("compare_col_B")
                         
-                    # Plotly traces
-                    edge_traces = []
-                    for edge in G.edges(data=True):
-                        x0, y0 = pos[edge[0]]
-                        x1, y1 = pos[edge[1]]
-                        w = edge[2].get('weight', 1)
-                        width = min(1 + w * 0.8, 6.0)
-                        edge_trace = go.Scatter(
-                            x=[x0, x1, None], y=[y0, y1, None],
-                            line=dict(width=width, color='rgba(148, 163, 184, 0.4)'),
-                            hoverinfo='none',
-                            mode='lines'
-                        )
-                        edge_traces.append(edge_trace)
-                        
-                    node_x = []
-                    node_y = []
-                    node_text = []
-                    node_size = []
-                    node_color = []
-                    
-                    for node in G.nodes():
-                        x, y = pos[node]
-                        node_x.append(x)
-                        node_y.append(y)
-                        node_text.append(f"<b>{node}</b><br>출현빈도: {freq_dict.get(node, 0)}회<br>연결도: {G.degree(node)}")
-                        node_size.append(min(15 + freq_dict.get(node, 1) * 2, 45))
-                        node_color.append(G.degree(node))
-                        
-                    node_trace = go.Scatter(
-                        x=node_x, y=node_y,
-                        mode='markers+text',
-                        hoverinfo='text',
-                        text=[node for node in G.nodes()],
-                        textposition="top center",
-                        hovertext=node_text,
-                        textfont=dict(size=12, color='#0f172a', family="Noto Sans KR"),
-                        marker=dict(
-                            showscale=True,
-                            colorscale='Viridis',
-                            reversescale=True,
-                            color=node_color,
-                            size=node_size,
-                            colorbar=dict(
-                                title='연결 강도 (Degree)',
-                                thickness=15,
-                                x=1.02,
-                                len=0.6
-                            ),
-                            line=dict(width=2, color='white')
-                        )
-                    )
-                    
-                    fig_net = go.Figure(
-                        data=edge_traces + [node_trace],
-                        layout=go.Layout(
-                            showlegend=False,
-                            hovermode='closest',
-                            margin=dict(b=20, l=20, r=20, t=20),
-                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                            plot_bgcolor='rgba(248, 250, 252, 0.4)',
-                            paper_bgcolor='white',
-                            height=550
-                        )
-                    )
-                    
-                    col_n_1, col_n_2 = st.columns([2, 1])
-                    with col_n_1:
-                        st.markdown("##### 의미망 네트워크 연관 관계 지도")
-                        st.plotly_chart(fig_net, use_container_width=True)
-                        st.caption("💡 노드를 클릭하고 잡아당기거나, 마우스 휠로 확대 및 스크롤할 수 있습니다.")
-                        
-                    with col_n_2:
-                        st.markdown("##### 키워드 동시출현 원형 빈도수 매트릭스")
-                        st.dataframe(co_matrix, use_container_width=True)
-                        
-                        st.markdown("🤖 **복사 및 다운로드**")
-                        
-                        # 1. Interactive HTML download
-                        html_buffer = io.StringIO()
-                        fig_net.write_html(html_buffer, include_plotlyjs='cdn')
-                        html_bytes = html_buffer.getvalue().encode('utf-8')
-                        
-                        st.download_button(
-                            label="🌐 인터랙티브 그래프 HTML 다운로드",
-                            data=html_bytes,
-                            file_name="keyword_network.html",
-                            mime="text/html"
-                        )
-                        
-                        # 2. Static PNG download
-                        try:
-                            fig_plt, ax = plt.subplots(figsize=(6, 5))
-                            nx.draw_networkx_nodes(G, pos, ax=ax, node_size=[freq_dict.get(n, 1)*50 + 200 for n in G.nodes()], node_color=node_color, cmap=plt.cm.viridis)
-                            nx.draw_networkx_edges(G, pos, ax=ax, width=[G[u][v]['weight']*0.8 for u,v in G.edges()], edge_color='gray', alpha=0.5)
-                            nx.draw_networkx_labels(G, pos, ax=ax, font_family='Malgun Gothic', font_size=10, font_weight='bold')
-                            ax.axis('off')
-                            plt.tight_layout()
-                            
-                            img_buf = io.BytesIO()
-                            plt.savefig(img_buf, format='png', dpi=150)
-                            img_buf.seek(0)
-                            plt.close()
-                            
-                            st.download_button(
-                                label="🖼️ 네트워크 그래프 PNG 다운로드",
-                                data=img_buf,
-                                file_name="keyword_network.png",
-                                mime="image/png"
-                            )
-                        except Exception as e:
-                            st.caption(f"PNG 이미지 생성 대기 지연: {e}")
-                            
-                        # 3. CSV matrix download
-                        csv_matrix = co_matrix.to_csv(index=True).encode('utf-8-sig')
-                        st.download_button(
-                            label="📥 매트릭스 데이터 CSV 다운로드",
-                            data=csv_matrix,
-                            file_name="co_occurrence_matrix.csv",
-                            mime="text/csv"
-                        )
-                        
+                        if compare_layout == "나란히 보기 (2단 컬럼)":
+                            col_left, col_right = st.columns(2)
+                            with col_left:
+                                st.markdown(f"### 🅰️ {compare_col_A}")
+                                render_network_analysis_results(res_A, compare_col_A, "comp_A")
+                            with col_right:
+                                st.markdown(f"### 🅱️ {compare_col_B}")
+                                render_network_analysis_results(res_B, compare_col_B, "comp_B")
+                        else:
+                            comp_tabs = st.tabs([f"🅰️ {compare_col_A}", f"🅱️ {compare_col_B}"])
+                            with comp_tabs[0]:
+                                render_network_analysis_results(res_A, compare_col_A, "comp_A_tab")
+                            with comp_tabs[1]:
+                                render_network_analysis_results(res_B, compare_col_B, "comp_B_tab")
+                else:
+                    if "network_result_single" in st.session_state:
+                        res_single = st.session_state.network_result_single
+                        render_network_analysis_results(res_single, "통합 분석", "single")
+
+
         # --- Step 7: HMW 도출 ---
         with tabs_sub[2]:
             st.subheader("💡 AI 기반 HMW (How Might We) 기회 및 질문 도출")
