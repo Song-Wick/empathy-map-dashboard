@@ -827,8 +827,7 @@ def render_network_analysis_results(res: dict, label: str, key_suffix: str = "")
         fig_net.add_trace(node_trace)
         
     fig_net.update_layout(
-        title=f"어휘 의미망 네트워크 ({label})",
-        titlefont_size=14,
+        title=dict(text=f"어휘 의미망 네트워크 ({label})", font=dict(size=14)),
         showlegend=True,
         legend=dict(
             title=dict(text="어휘 군집 및 대표 키워드"),
